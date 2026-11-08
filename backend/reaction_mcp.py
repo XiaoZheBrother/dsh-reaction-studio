@@ -60,6 +60,7 @@ class ReactionJobs:
             job['live_backend']=str(Path(shared.origin).parent)
         job.update(video=material['path'],output=str(path),seconds=seconds,step=2,port=self.config.get('port',3113),afterword=afterword)
         job.update(episode_label=material['title'],character_name=self.config.get('character_name','大肥鱼'))
+        job.update(model_dir=self.config.get('model_dir'),cubism_core=self.config.get('cubism_core'))
         job.update(jingyu_url=self.config.get('jingyu_url','http://127.0.0.1:61949'),model_file=self.config.get('model_file','大肥鱼.model3.json'))
         if self.config.get('hearing_python'):
             job.update(hearing_python=self.config['hearing_python'],hearing_models=self.config['hearing_models'])

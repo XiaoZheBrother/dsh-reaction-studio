@@ -62,5 +62,19 @@ class JobTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(),original)
         self.assertEqual(spawn.call_count,1)
 
+    @patch('reaction_mcp.subprocess.Popen')
+    def test_embedded_assets_are_snapshotted_without_rewriting_existing_jobs(self,spawn):
+        spawn.return_value.pid=123
+        self.jobs.config.update(model_dir='local-model',cubism_core='licensed-core.js')
+        self.jobs.start('episode','embedded',3,False)
+        path=self.jobs.folder('embedded')/'job.json';original=path.read_bytes()
+        saved=json.loads(original)
+        self.assertEqual(saved['model_dir'],'local-model')
+        self.assertEqual(saved['cubism_core'],'licensed-core.js')
+        self.jobs.config.update(model_dir='different-model')
+        self.jobs.start('episode','embedded',3,False)
+        self.assertEqual(path.read_bytes(),original)
+        self.assertEqual(spawn.call_count,1)
+
 
 if __name__=='__main__':unittest.main()

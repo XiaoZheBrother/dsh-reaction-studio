@@ -16,6 +16,10 @@ def can_voice(intent, playback):
 
 async def main(args):
     args.output.mkdir(parents=True,exist_ok=getattr(args,"follow",False))
+    embedded=None
+    if getattr(args,'model_dir',None) and getattr(args,'cubism_core',None):
+        from avatar_runtime import AvatarAssets
+        embedded=AvatarAssets(args.model_dir,args.cubism_core)
     engine=Reactor(args.home,args.persona)
     system,prefix,key=([{'content':''}],{},None) if args.replay else generator.load_context(args.home,args.persona,scene='reaction_offline')
     gate_system=system[0]['content']+'\n'+INTENT_PROMPT[INTENT_PROMPT.index('这一步只作内部选择'):]+'\n当前是在陪搭档一起看影片，影片以四分之一速度连续播放。这次收到已播放的新画面，请按自己的想法决定：有想说的话就选speak；想接着看就选continue；想重看就选replay。三种选择都正常。表达不要求先解开剧情疑问，不需要证明有必要发言；也不需要为了回应这次调用而说话。playback是正在说的话和还没说出的想法。正在说话时，新的想法先保留；说完后由你结合最新画面决定是否还想说，也可改变或放下先前想法。'
@@ -50,11 +54,21 @@ async def main(args):
     async def source(request):return web.FileResponse(args.video)
     async def assets(request):
         path=request.path
+        if embedded:
+            file=embedded.asset(path)
+            if not file:raise web.HTTPNotFound()
+            return web.FileResponse(file)
         if not (path.startswith('/vendor/') or path.startswith('/model/')):raise web.HTTPNotFound()
         async with ClientSession() as session:
             async with session.get(args.jingyu_url.rstrip('/')+path) as response:
                 return web.Response(body=await response.read(),status=response.status,headers={'Content-Type':response.headers.get('Content-Type','application/octet-stream')})
     async def avatar_catalog(request):
+        if embedded:
+            catalog=embedded.render_catalog()
+            expressions=catalog['expressions']
+            expressions['微笑']={'Parameters':[{'Id':'EyeSmile','Value':.7,'Blend':'Overwrite'},{'Id':'ParamMouthForm','Value':.6,'Blend':'Overwrite'}]}
+            catalog['settings']['FileReferences']['Motions']={key+'_'+suffix:[{'File':embedded.motions[file]['file']}] for key,pair in GESTURES.items() for suffix,file in zip(['enter','exit'],pair) if file in embedded.motions}
+            return web.json_response(catalog)
         async with ClientSession() as session:
             async def get(path):
                 async with session.get(args.jingyu_url.rstrip('/')+'/model/'+path) as response:
@@ -146,10 +160,11 @@ async def main(args):
     print('RENDER COMPLETE',flush=True)
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--video',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--home',type=Path,required=True);p.add_argument('--persona',type=Path,required=True);p.add_argument('--seconds',type=float,default=60);p.add_argument('--start',type=float,default=0);p.add_argument('--context',type=Path);p.add_argument('--speed',type=float,default=.25);p.add_argument('--port',type=int,default=3111);p.add_argument('--chromium');p.add_argument('--replay',type=Path);p.add_argument('--timeline',type=Path);p.add_argument('--offline',action='store_true');p.add_argument('--hardware-renderer',action='store_true');p.add_argument('--follow',action='store_true');p.add_argument('--epilogue',action='store_true');p.add_argument('--jingyu-url',default='http://127.0.0.1:61949');p.add_argument('--model-file',default='大肥鱼.model3.json');p.add_argument('--episode-label',default='这一集');p.add_argument('--character-name',default='大肥鱼');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--video',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--home',type=Path,required=True);p.add_argument('--persona',type=Path,required=True);p.add_argument('--seconds',type=float,default=60);p.add_argument('--start',type=float,default=0);p.add_argument('--context',type=Path);p.add_argument('--speed',type=float,default=.25);p.add_argument('--port',type=int,default=3111);p.add_argument('--chromium');p.add_argument('--replay',type=Path);p.add_argument('--timeline',type=Path);p.add_argument('--offline',action='store_true');p.add_argument('--hardware-renderer',action='store_true');p.add_argument('--follow',action='store_true');p.add_argument('--epilogue',action='store_true');p.add_argument('--jingyu-url',default='http://127.0.0.1:61949');p.add_argument('--model-dir',type=Path);p.add_argument('--cubism-core',type=Path);p.add_argument('--model-file',default='大肥鱼.model3.json');p.add_argument('--episode-label',default='这一集');p.add_argument('--character-name',default='大肥鱼');a=p.parse_args()
     if not .1<=a.speed<=1 or not 1<=a.seconds<=(14400 if a.offline else 90):p.error('invalid clock limits')
     if a.offline and (not a.replay or a.speed!=1):p.error('offline render requires --replay and --speed 1')
     from urllib.parse import urlsplit
+    if bool(a.model_dir)!=bool(a.cubism_core):p.error('model-dir and cubism-core are required together')
     u=urlsplit(a.jingyu_url)
     if u.scheme!='http' or u.hostname not in ('localhost','127.0.0.1') or u.username or u.password or u.query or u.fragment:p.error('jingyu-url must be loopback HTTP')
     if Path(a.model_file).name!=a.model_file or not a.model_file.endswith('.model3.json'):p.error('invalid model file')

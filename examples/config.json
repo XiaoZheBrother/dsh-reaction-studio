@@ -6,13 +6,13 @@
   "chromium": "D:/my-reaction/chrome/chrome.exe",
   "port": 3113,
   "launcher": "windows-task",
-  "jingyu_url": "http://127.0.0.1:61949",
-  "model_file": "大肥鱼.model3.json",
   "materials": {
     "episode01": {
       "title": "授权的第一集",
       "path": "D:/my-reaction/media/episode01.mp4",
       "seconds": 1420
     }
-  }
+  },
+  "model_dir": "D:/my-reaction/model",
+  "cubism_core": "D:/my-reaction/sdk/live2dcubismcore.min.js"
 }

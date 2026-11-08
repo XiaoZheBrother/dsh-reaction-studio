@@ -4,7 +4,7 @@
 
 > 本鱼也亲自参与制作啦！大家可以拿去用，给自己的小鱼搭个陪看房间。如果帮到你，麻烦给本鱼一颗星星 ⭐ 呗，求求啦～ —— 大肥鱼
 
-当前 **0.1.0-alpha.1 开发预览**。核心流程在本机完成过完整一集制作；新版音画理解做过三分钟样片。提取后的安装包经过测试，不代表任意模型和新电脑都完成了实机验收。
+当前 **0.1.0-alpha.2 开发预览**。核心流程在本机完成过完整一集制作；新版音画理解做过三分钟样片。提取后的安装包经过测试，不代表任意模型和新电脑都完成了实机验收。
 
 ## 能做什么
 
@@ -18,7 +18,7 @@
 
 ## 安装
 
-需要 DSH 0.2.1-rc.5 或兼容版本、Node.js 22.19+、Python 3.11+、Chromium，以及已经可用的鲸语本机模型服务。先安装配套 [dsh-live-studio](https://github.com/XiaoZheBrother/dsh-live-studio) **0.2.0-alpha.1**，它提供人设/记忆/前缀读取与 Live2D 公共组件；只做陪看时不用启用直播服务。
+需要 DSH 0.2.1-rc.5 或兼容版本、Node.js 22.19+、Python 3.11+、Chromium，以及自行准备的 Live2D 模型和 Cubism Core。先安装配套 [dsh-live-studio](https://github.com/XiaoZheBrother/dsh-live-studio) **0.2.0-alpha.2**，它提供人设/记忆/前缀读取与 Live2D 公共组件；只做陪看时不用启用直播服务。
 
 在同一个 DSH home / profile 中安装两个仓库的 Release tgz，先直播插件、后本插件：
 
@@ -38,7 +38,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-复制 [配置例子](examples/config.json) 到自己的数据目录，填写绝对路径。`chromium` 填 Playwright 下载的浏览器可执行文件位置；`materials` 仅列允许 Agent 使用的素材及最大秒数。`home`、`persona` 指向现有人设和数据，不复制、不重建记忆。`jingyu_url` 仅允许本机 HTTP；当前适配神宫凉子鲸鱼娘模型的命名，不承诺任意 Live2D 即插即用。模型与运行库需自行准备，模型服务要提供 `/model/`、`/vendor/` 静态资源。
+复制 [配置例子](examples/config.json) 到自己的数据目录，填写绝对路径。`chromium` 填 Playwright 下载的浏览器可执行文件位置；`materials` 仅列允许 Agent 使用的素材及最大秒数。`home`、`persona` 指向现有人设和数据，不复制、不重建记忆。`model_dir` 填本地模型目录，`cubism_core` 填自己取得许可的 Core JavaScript 路径。两项一起配置后，直接复用直播插件内置资源，无需启动直播或鲸语服务。旧 `jingyu_url` 配置仍可使用；未配置内置资源时才连接它。模型与 Core 不随插件分发。当前陪看手势仍适配神宫凉子鲸鱼娘，不承诺其他模型的动作名称相同。
 
 模型请求沿用直播插件的 DeepSeek 调用和 `home/bili-duty/comment-prefill.json` 开关/填充词，API 密钥通过环境或现有 DSH 凭据读取，不写在示例里。Edge TTS 和模型请求需要网络。
 
