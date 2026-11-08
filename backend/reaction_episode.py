@@ -70,6 +70,8 @@ async def main(args):
     args.output.mkdir(parents=True,exist_ok=True)
     ff=imageio_ffmpeg.get_ffmpeg_exe(); frames=args.output/'observed-frames'
     signature={'video':str(args.video.resolve()),'size':args.video.stat().st_size,'seconds':args.seconds,'step':args.step,'pacing_version':2}
+    deferred_voice=getattr(args,'deferred_voice',False)
+    if deferred_voice:signature['voice_stage']='deferred-v1'
     hearing_path = getattr(args, 'hearing', None)
     hearing = json.loads(hearing_path.read_text(encoding='utf-8')) if hearing_path else None
     if hearing is not None:
@@ -98,6 +100,8 @@ async def main(args):
     if hearing is not None:
         gate = system[0]['content']+'\n'+INTENT_PROMPT+'\n'+TURN_PROMPT+'\n'+PACING_PROMPT+'\n'+PERFORMANCE_PROMPT
         gate = gate.replace('没有原声音频输入，不臆测音色。', '有带时间戳的机器听觉证据，原始波形未直接传给你。声纹与角色归属可能有误，不把候选当事实。')
+    if deferred_voice:
+        gate+='\n这是离线重看制作，保留原有记忆，但仅依据当前已播放的材料作出反应，不假装初见。配音稍后合成，speech_awareness的时长是临时估计；并非要求填满时间。'
     async def complete(messages, structured=False):
         async def request():
             return (await engine.complete(messages,key,structured=structured))[0]
@@ -202,6 +206,13 @@ async def main(args):
                 if not text.strip():raise ValueError('Empty chosen speech')
                 event['text']=text
             state['inflight']=event;checkpoint_now()
+        if deferred_voice and event.get('text') and not event.get('pacing_final'):
+            # Provisional occupancy is not a speech quota. The actor revisits measured timing after synthesis.
+            duration=max(.5,len(event['text'])/5)
+            event.update(audio='/audio/deferred.wav',captions=[],duration=duration,duration_estimated=True,pacing_final=True)
+            choice='pause' if event.get('delivery')=='pause' else 'keep'
+            call={'name':'reaction_pause','arguments':{'reason':event.get('pause_reason') or event.get('reason'),'resume':'speech_end'}} if choice=='pause' else {'name':'reaction_continue','arguments':{}}
+            event['pacing_reviews']=[{'text':event['text'],'duration':duration,'estimated':True,'decision':{'choice':choice,'reason':event.get('reason','actor selection'),'tool_call':call}}]
         if event.get('text'):
             while not event.get('pacing_final'):
                 revision=len(event.get('pacing_reviews',[]))
@@ -296,6 +307,7 @@ if __name__=='__main__':
     p.add_argument('--home',type=Path,required=True);p.add_argument('--persona',type=Path,required=True)
     p.add_argument('--seconds',type=float,default=1420);p.add_argument('--step',type=float,default=2)
     p.add_argument('--hearing',type=Path)
+    p.add_argument('--deferred-voice',action='store_true')
     a=p.parse_args()
     if not 0<a.seconds<=14400 or not .25<=a.step<=10:p.error('Invalid viewing bounds')
     asyncio.run(main(a))

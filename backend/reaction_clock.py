@@ -16,6 +16,10 @@ def can_voice(intent, playback):
 
 async def main(args):
     args.output.mkdir(parents=True,exist_ok=getattr(args,"follow",False))
+    if getattr(args,'speech_gain',None) is None:
+        state_path=args.replay/'viewing-state.json' if args.replay else None
+        dubbed=state_path and state_path.exists() and json.loads(state_path.read_text('utf-8')).get('dubbing',{}).get('provider')=='IndexTTS2'
+        args.speech_gain=1.0 if dubbed else 1.4
     embedded=None
     if getattr(args,'model_dir',None) and getattr(args,'cubism_core',None):
         from avatar_runtime import AvatarAssets
@@ -40,12 +44,14 @@ async def main(args):
     if args.replay:
         old=json.loads((args.timeline or args.replay/'clock-metrics.json').read_text(encoding='utf-8'))
         choices={e['id']:e for e in json.loads((args.replay/'decisions.json').read_text(encoding='utf-8'))['events']}
+        if any(e.get('duration_estimated') for e in choices.values()):raise ValueError('Finalize deferred dubbing before rendering')
         replay_performances=[{**e,'at':e['wall']*old['speed']/args.speed} for e in old.get('performances',[])]
         replay=[{**choices[e['id']],'at':e['wall']*old['speed']/args.speed} for e in old['playbacks']]
         for e in replay:
-            words=[json.loads(line) for line in (args.replay/(Path(e['audio']).stem+'.jsonl')).read_text(encoding='utf-8').splitlines()]
-            e['captions']=caption_pages(e['text'],words)
-    async def config(request):return web.json_response({'token':token,'speed':args.speed,'seconds':args.seconds,'start':args.start,'observeStep':2,'replay':replay,'replayPerformances':replay_performances,'offline':args.offline,'epilogue':getattr(args,'epilogue',False),'fps':24,'episodeLabel':args.episode_label,'characterName':args.character_name})
+            if not e.get('captions'):
+                words=[json.loads(line) for line in (args.replay/(Path(e['audio']).stem+'.jsonl')).read_text(encoding='utf-8').splitlines()]
+                e['captions']=caption_pages(e['text'],words)
+    async def config(request):return web.json_response({'token':token,'speechGain':getattr(args,'speech_gain',1.4),'speed':args.speed,'seconds':args.seconds,'start':args.start,'observeStep':2,'replay':replay,'replayPerformances':replay_performances,'offline':args.offline,'epilogue':getattr(args,'epilogue',False),'fps':24,'episodeLabel':args.episode_label,'characterName':args.character_name})
     async def source_frame(request):
         name=request.match_info['name']
         if not re.fullmatch(r'\d{6}\.jpg',name):raise web.HTTPNotFound()
@@ -160,7 +166,7 @@ async def main(args):
     print('RENDER COMPLETE',flush=True)
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--video',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--home',type=Path,required=True);p.add_argument('--persona',type=Path,required=True);p.add_argument('--seconds',type=float,default=60);p.add_argument('--start',type=float,default=0);p.add_argument('--context',type=Path);p.add_argument('--speed',type=float,default=.25);p.add_argument('--port',type=int,default=3111);p.add_argument('--chromium');p.add_argument('--replay',type=Path);p.add_argument('--timeline',type=Path);p.add_argument('--offline',action='store_true');p.add_argument('--hardware-renderer',action='store_true');p.add_argument('--follow',action='store_true');p.add_argument('--epilogue',action='store_true');p.add_argument('--jingyu-url',default='http://127.0.0.1:61949');p.add_argument('--model-dir',type=Path);p.add_argument('--cubism-core',type=Path);p.add_argument('--model-file',default='大肥鱼.model3.json');p.add_argument('--episode-label',default='这一集');p.add_argument('--character-name',default='大肥鱼');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--video',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--home',type=Path,required=True);p.add_argument('--persona',type=Path,required=True);p.add_argument('--seconds',type=float,default=60);p.add_argument('--start',type=float,default=0);p.add_argument('--context',type=Path);p.add_argument('--speed',type=float,default=.25);p.add_argument('--port',type=int,default=3111);p.add_argument('--chromium');p.add_argument('--replay',type=Path);p.add_argument('--timeline',type=Path);p.add_argument('--offline',action='store_true');p.add_argument('--hardware-renderer',action='store_true');p.add_argument('--follow',action='store_true');p.add_argument('--epilogue',action='store_true');p.add_argument('--jingyu-url',default='http://127.0.0.1:61949');p.add_argument('--model-dir',type=Path);p.add_argument('--cubism-core',type=Path);p.add_argument('--model-file',default='大肥鱼.model3.json');p.add_argument('--episode-label',default='这一集');p.add_argument('--character-name',default='大肥鱼');p.add_argument('--speech-gain',type=float,default=None);a=p.parse_args()
     if not .1<=a.speed<=1 or not 1<=a.seconds<=(14400 if a.offline else 90):p.error('invalid clock limits')
     if a.offline and (not a.replay or a.speed!=1):p.error('offline render requires --replay and --speed 1')
     from urllib.parse import urlsplit

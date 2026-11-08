@@ -23,7 +23,7 @@ async def render_frames(page,args,replay,performances,ff):
     original=source_audio(ff,args.video,args.output/'original.f32le',args.start,args.seconds,pauses)
     inputs=['-f','f32le','-ar','48000','-ac','2','-i',str(original)];filters=[f'[0:a]apad,atrim=duration={duration}[original]'];mix='[original]'
     for i,v in enumerate(voices,1):
-        inputs+=['-i',str(v['path'])];filters.append(f'[{i}:a]volume=1.4,adelay={round(v["at"]*1000)}:all=1[a{i}]');mix+=f'[a{i}]'
+        inputs+=['-i',str(v['path'])];filters.append(f'[{i}:a]volume={getattr(args,"speech_gain",1.4)},adelay={round(v["at"]*1000)}:all=1[a{i}]');mix+=f'[a{i}]'
     filters.append(mix+f'amix=inputs={len(voices)+1}:duration=first:normalize=0,aresample=48000,alimiter=limit=0.891251:level=0:latency=1[mix]')
     audio=args.output/'mixed.wav'
     subprocess.run([ff,'-v','error','-y',*inputs,'-filter_complex',';'.join(filters),'-map','[mix]','-c:a','pcm_s16le',str(audio)],check=True)
@@ -124,7 +124,7 @@ async def render_following(page,args,replay,performances,ff):
             target=round(voice['at']*rate)
             if target<position:raise ValueError('Overlapping speech on committed timeline')
             silence(target-position)
-            raw=subprocess.run([ff,'-v','error','-i',str(voice['path']),'-af','volume=1.4','-f','f32le','-ac','2','-ar',str(rate),'pipe:1'],capture_output=True,check=True).stdout
+            raw=subprocess.run([ff,'-v','error','-i',str(voice['path']),'-af',f'volume={getattr(args,"speech_gain",1.4)}','-f','f32le','-ac','2','-ar',str(rate),'pipe:1'],capture_output=True,check=True).stdout
             dest.write(raw);position=target+len(raw)//8
         silence(max(0,total_samples-position))
     audio=args.output/'mixed.wav'

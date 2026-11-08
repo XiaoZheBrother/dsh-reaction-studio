@@ -35,6 +35,7 @@ from reaction_job_control import exclusive_job
 
 
 def produce(job):
+    if job.get('voice_studio') and job.get('afterword'):raise ValueError('Deferred IndexTTS2 afterword is not configured; use a bounded preview without afterword')
     for name in ('video','output','home','persona','chromium'):
         if not Path(job[name]).is_absolute():raise ValueError(f'{name} must be absolute')
     seconds=job['seconds']
@@ -71,14 +72,21 @@ def produce(job):
             phase('viewing')
             hearing_file=str(root/'hearing.json') if job.get('hearing_python') else job.get('hearing')
             hearing_args=['--hearing',hearing_file] if hearing_file else []
-            run('reaction_episode.py',common+['--output',root/'viewing','--step',job.get('step',2)]+hearing_args)
+            voice=job.get('voice_studio')
+            run('reaction_episode.py',common+['--output',root/'viewing','--step',job.get('step',2)]+hearing_args+(['--deferred-voice'] if voice else []))
+            final_viewing=root/'viewing'
+            if voice:
+                phase('dubbing')
+                final_viewing=root/'dubbed'
+                run('reaction_dub.py',['--viewing',root/'viewing','--output',final_viewing,'--home',job['home'],'--persona',job['persona'],
+                    '--studio-config',voice['config'],'--studio-backend',voice['backend'],'--audio-python',voice['python'],'--reference',voice.get('reference','voice-reference')])
             phase('rendering')
             # A completed render is reusable; partial renders resume from frames.
             report_path=root/'render'/'render-report.json'
             if not report_path.exists():
-                run('reaction_clock.py',common+avatar+['--output',root/'render','--replay',root/'viewing',
+                run('reaction_clock.py',common+avatar+['--output',root/'render','--replay',final_viewing,
                     '--offline','--follow','--speed',1,'--hardware-renderer','--chromium',job['chromium'],
-                    '--port',job.get('port',3111)])
+                    '--port',job.get('port',3111),'--speech-gain',job.get('speech_gain',1.0 if voice else 1.4)])
             video=root/'render'/'大肥鱼陪看-第一季01完整版.mp4'
             ff=imageio_ffmpeg.get_ffmpeg_exe()
             report=json.loads(report_path.read_text(encoding='utf-8'))
@@ -98,7 +106,7 @@ def produce(job):
                     run('reaction_clock.py',avatar+['--video',root/'afterword'/'silent-source.mp4',
                         '--output',ending,'--home',job['home'],'--persona',job['persona'],
                         '--seconds',1,'--speed',1,'--replay',root/'afterword','--offline','--epilogue',
-                        '--hardware-renderer','--chromium',job['chromium'],'--port',job.get('port',3111)])
+                        '--hardware-renderer','--chromium',job['chromium'],'--port',job.get('port',3111),'--speech-gain',job.get('speech_gain',1.0 if voice else 1.4)])
                 tail=json.loads((ending/'render-report.json').read_text(encoding='utf-8'))
                 merged=root/'reaction-with-afterword.mp4'
                 filters=(f"[0:v]setpts=PTS-STARTPTS[v0];[1:v]setpts=PTS-STARTPTS[v1];"

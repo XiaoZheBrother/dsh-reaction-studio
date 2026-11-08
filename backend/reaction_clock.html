@@ -10,7 +10,7 @@ g.setTransform(1.5,0,0,1.5,0,0);
 const catalog=await(await fetch('/avatar-catalog')).json();catalog.settings.url=location.origin+'/model/'+catalog.modelFile;
 const ctx=new AudioContext({sampleRate:48000}),mix=ctx.createMediaStreamDestination(),analyser=ctx.createAnalyser();analyser.fftSize=512;const bins=new Uint8Array(analyser.fftSize);
 const original=ctx.createMediaElementSource(film),originalGain=ctx.createGain();original.connect(originalGain).connect(mix);
-const speech=ctx.createMediaElementSource(voice),speechGain=ctx.createGain();speechGain.gain.value=1.4;speech.connect(analyser);analyser.connect(speechGain).connect(mix);
+const speech=ctx.createMediaElementSource(voice),speechGain=ctx.createGain();speechGain.gain.value=cfg.speechGain??1.4;speech.connect(analyser);analyser.connect(speechGain).connect(mix);
 film.defaultPlaybackRate=cfg.speed;voice.defaultPlaybackRate=cfg.speed;film.src='/source';film.playbackRate=cfg.speed;film.preservesPitch=false;voice.playbackRate=cfg.speed;voice.preservesPitch=false;
 const stage=document.querySelector('#model-stage'),app=new PIXI.Application({width:320,height:480,backgroundAlpha:0,antialias:true,resolution:3,preserveDrawingBuffer:true});stage.append(app.view);app.ticker.stop();
 let model;
@@ -20,6 +20,17 @@ const timeline=crypto.randomUUID(),metrics={performances:[],mouth:[],playbacks:[
 const performanceController=createPerformanceController({model,catalog,clock,film,metrics,cfg});
 const perform=performanceController.perform,animatePerformance=performanceController.update;
 const core=model.internalModel.coreModel;
+const ambientIds=['PositionX','PositionY','PositionZ','AngleX','AngleY','AngleZ'];
+const parameterIds=new Set(core._model.parameters.ids),physicsOutputs=new Set(catalog.physicsOutputs||[]);
+const ambientBase=Object.fromEntries(ambientIds.filter(id=>parameterIds.has(id)&&!physicsOutputs.has(id)).map(id=>[id,core.getParameterValueById(id)]));
+let ambientWeight=0;
+function ambientPose(t,dt){
+ const state=performanceController.snapshot(),target=state.motion==='none'&&state.gesture==='none'?1:0;
+ ambientWeight+=(target-ambientWeight)*Math.min(1,dt/300);
+ const p=t*Math.PI/4,offset=[2.08*Math.sin(p),.39*Math.sin(2*p+.4),1.3*Math.sin(p-.35),1.95*Math.sin(p-.6),.78*Math.sin(2*p-.3),1.3*Math.sin(p-.45)];
+ const owned=new Set((catalog.expressions[state.expression]?.Parameters||[]).map(v=>v.Id));
+ ambientIds.forEach((id,i)=>{if(id in ambientBase&&!owned.has(id))core.setParameterValueById(id,core.getParameterValueById(id)+offset[i]*ambientWeight)});
+}
 function clock(){return cfg.offline?offlineTime:ctx.currentTime-started}
 function wrap(text,n){return Array.from(text).reduce((a,c,i)=>{if(i%n===0)a.push('');a[a.length-1]+=c;return a},[])}
 function wrapCaption(text,width){text=text.replace(/\s*\n\s*/g,' ');const lines=[];let line='';for(const c of text){if(c==='\n'){lines.push(line);line='';continue}if(line&&g.measureText(line+c).width>width){lines.push(line);line=c}else line+=c}if(line)lines.push(line);return lines}
@@ -28,7 +39,7 @@ function draw(now){
  const delta=cfg.offline?1000/cfg.fps:lastTick?Math.min(100,now-lastTick):0;lastTick=now;
  if(!voice.paused){analyser.getByteTimeDomainData(bins)}else bins.fill(128);
  let rms=0;for(const b of bins)rms+=((b-128)/128)**2;rms=Math.sqrt(rms/bins.length);const mouth=cfg.offline?offlineMouth:Math.min(1,rms*7);
- if(model){model.update(delta*cfg.speed);animatePerformance();model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',mouth);model.internalModel.coreModel.update();app.renderer.render(app.stage)}
+ if(model){for(const [id,value] of Object.entries(ambientBase))core.setParameterValueById(id,value);model.update(delta*cfg.speed);animatePerformance();ambientPose(clock()*cfg.speed,delta*cfg.speed);model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',mouth);model.internalModel.coreModel.update();app.renderer.render(app.stage)}
  g.drawImage(backdrop,0,0,1280,720);
  // The source is a smaller, uncropped 16:9 inset in the upper right.
  g.fillStyle='rgba(6,20,37,.9)';g.strokeStyle='#b5dce2';g.lineWidth=2;
