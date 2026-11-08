@@ -1,0 +1,5 @@
+- insert:
+    - id: dsh-reaction-studio
+      name: dsh-reaction-studio
+      config:
+        enabled: false

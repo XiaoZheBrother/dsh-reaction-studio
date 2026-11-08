@@ -1,0 +1,50 @@
+{
+  "name": "dsh-reaction-studio",
+  "version": "0.1.0-alpha.1",
+  "description": "大肥鱼陪看工作室：连续观察、自主开口、暂停回看与离线视频制作",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "reaction",
+    "live2d",
+    "agent"
+  ],
+  "author": {
+    "name": "XiaoZheBrother",
+    "email": "958117002@qq.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/XiaoZheBrother/dsh-reaction-studio.git"
+  },
+  "files": [
+    "index.js",
+    "bridge.mjs",
+    "cordis.patch.yml",
+    "backend",
+    "examples",
+    "requirements.txt",
+    "README.md",
+    "NOTICE.md",
+    "LICENSE",
+    "docs/*.md"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "dsh-live-studio": "^0.2.0-alpha.1",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@deepseek-ai/dsh-tools": ">=0.2.1-rc.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

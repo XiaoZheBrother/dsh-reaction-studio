@@ -1,0 +1,81 @@
+<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#101e30}#out{width:100vw;height:auto}#model-stage{position:absolute;left:-1000px;top:0;width:320px;height:480px}video,audio{position:absolute;left:-2000px}</style>
+<canvas id="out" width="1920" height="1080"></canvas><div id="model-stage"></div><video id="film" crossorigin="anonymous"></video><audio id="voice"></audio>
+<script src="/vendor/live2dcubismcore.min.js"></script><script src="/vendor/pixi.min.js"></script><script src="/vendor/cubism4.colors.min.js"></script>
+<script type="module">
+import {createPerformanceController} from "/live-performance.mjs";
+const cfg=await(await fetch('/config')).json();
+const backdrop=new Image();backdrop.src='/background';await backdrop.decode();let replayIndex=0,performanceReplayIndex=0;let offlineTime=0,offlineMouth=0,offlineCaption='',offlineImage=null,offlineURL='';
+const film=document.querySelector('#film'),voice=document.querySelector('#voice'),out=document.querySelector('#out'),g=out.getContext('2d');
+g.setTransform(1.5,0,0,1.5,0,0);
+const catalog=await(await fetch('/avatar-catalog')).json();catalog.settings.url=location.origin+'/model/'+catalog.modelFile;
+const ctx=new AudioContext({sampleRate:48000}),mix=ctx.createMediaStreamDestination(),analyser=ctx.createAnalyser();analyser.fftSize=512;const bins=new Uint8Array(analyser.fftSize);
+const original=ctx.createMediaElementSource(film),originalGain=ctx.createGain();original.connect(originalGain).connect(mix);
+const speech=ctx.createMediaElementSource(voice),speechGain=ctx.createGain();speechGain.gain.value=1.4;speech.connect(analyser);analyser.connect(speechGain).connect(mix);
+film.defaultPlaybackRate=cfg.speed;voice.defaultPlaybackRate=cfg.speed;film.src='/source';film.playbackRate=cfg.speed;film.preservesPitch=false;voice.playbackRate=cfg.speed;voice.preservesPitch=false;
+const stage=document.querySelector('#model-stage'),app=new PIXI.Application({width:320,height:480,backgroundAlpha:0,antialias:true,resolution:3,preserveDrawingBuffer:true});stage.append(app.view);app.ticker.stop();
+let model;
+try{model=await PIXI.live2d.Live2DModel.from(catalog.settings,{autoInteract:false,autoUpdate:false,idleMotionGroup:'__no_idle__',motionPreload:'NONE'});app.stage.addChild(model);const m=model.internalModel;const scale=Math.min(310/m.originalWidth,470/m.originalHeight);model.scale.set(scale);model.position.set((320-m.originalWidth*scale)/2,(480-m.originalHeight*scale)/2)}catch(e){window.failure=e.stack;throw e}
+let busy=false,finished=false,draining=false,started=null,lastTick=0,lastObserved=cfg.start,lastCapture=-1,lastSample=0,frames=[],queue=[],pendingThought=null,current=null,recorder,chunks=[];
+const timeline=crypto.randomUUID(),metrics={performances:[],mouth:[],playbacks:[],observations:[],source:[],sampleRate:ctx.sampleRate,speed:cfg.speed};let recordStart;
+const performanceController=createPerformanceController({model,catalog,clock,film,metrics,cfg});
+const perform=performanceController.perform,animatePerformance=performanceController.update;
+const core=model.internalModel.coreModel;
+function clock(){return cfg.offline?offlineTime:ctx.currentTime-started}
+function wrap(text,n){return Array.from(text).reduce((a,c,i)=>{if(i%n===0)a.push('');a[a.length-1]+=c;return a},[])}
+function wrapCaption(text,width){text=text.replace(/\s*\n\s*/g,' ');const lines=[];let line='';for(const c of text){if(c==='\n'){lines.push(line);line='';continue}if(line&&g.measureText(line+c).width>width){lines.push(line);line=c}else line+=c}if(line)lines.push(line);return lines}
+function caption(){if(cfg.offline)return offlineCaption;if(!current||voice.paused)return '';const t=voice.currentTime;let chunk=current.captions.find(x=>x.start<=t&&t<=x.end);return chunk?.text||''}
+function draw(now){
+ const delta=cfg.offline?1000/cfg.fps:lastTick?Math.min(100,now-lastTick):0;lastTick=now;
+ if(!voice.paused){analyser.getByteTimeDomainData(bins)}else bins.fill(128);
+ let rms=0;for(const b of bins)rms+=((b-128)/128)**2;rms=Math.sqrt(rms/bins.length);const mouth=cfg.offline?offlineMouth:Math.min(1,rms*7);
+ if(model){model.update(delta*cfg.speed);animatePerformance();model.internalModel.coreModel.setParameterValueById('ParamMouthOpenY',mouth);model.internalModel.coreModel.update();app.renderer.render(app.stage)}
+ g.drawImage(backdrop,0,0,1280,720);
+ // The source is a smaller, uncropped 16:9 inset in the upper right.
+ g.fillStyle='rgba(6,20,37,.9)';g.strokeStyle='#b5dce2';g.lineWidth=2;
+ g.beginPath();g.roundRect(566,62,680,389,14);g.fill();g.stroke();
+ if(cfg.epilogue){
+   const fill=g.createLinearGradient(574,70,1238,443);fill.addColorStop(0,'#163d58');fill.addColorStop(1,'#102333');g.fillStyle=fill;g.fillRect(574,70,664,373.5);
+   g.fillStyle='#acdce6';g.font='20px Microsoft YaHei';g.fillText(cfg.episodeLabel+' / 观后手记',614,128);
+   g.fillStyle='#fff1cb';g.font='bold 42px Microsoft YaHei';g.fillText('看完这一集',614,211);
+   g.strokeStyle='#7cabb7';g.beginPath();g.moveTo(614,242);g.lineTo(1192,242);g.stroke();
+   g.fillStyle='#d4e9ed';g.font='25px Microsoft YaHei';g.fillText('这一集的故事',614,294);g.fillText('我现在的理解',614,345);g.fillText('留下的感受与疑问',614,396);
+ }else if(cfg.offline&&offlineImage)g.drawImage(offlineImage,574,70,664,373.5);else if(film.readyState>=2)g.drawImage(film,574,70,664,373.5);
+ g.drawImage(app.view,30,208,330,495);
+ g.fillStyle='rgba(8,24,42,.78)';g.beginPath();g.roundRect(30,28,420,92,18);g.fill();
+ g.fillStyle='#e4f8fb';g.font='bold 30px Microsoft YaHei';g.fillText('和大肥鱼一起看',52,68);
+ g.fillStyle='#b5dce2';g.font='17px Microsoft YaHei';g.fillText('陪看手记 / '+cfg.episodeLabel,54,99);
+ g.fillStyle='rgba(8,24,42,.86)';g.beginPath();g.roundRect(396,478,836,204,18);g.fill();
+ g.fillStyle='#a9dce7';g.font='bold 19px Microsoft YaHei';g.fillText(cfg.characterName,422,512);
+ g.fillStyle='#fff5dc';g.font='26px Microsoft YaHei';wrapCaption(caption(),784).slice(0,4).forEach((line,i)=>g.fillText(line,422,553+i*34));
+ originalGain.gain.value=1;
+ if(started!==null&&now-lastSample>200){metrics.mouth.push({wall:clock(),source:film.currentTime,voice:voice.paused?null:voice.currentTime,voiceRate:voice.playbackRate,caption:caption(),mouth});lastSample=now}
+ if(!cfg.offline)requestAnimationFrame(draw)
+}
+if(!cfg.offline)requestAnimationFrame(draw);
+async function playNext(){if(!voice.paused||!queue.length)return;current=queue.shift();voice.src=current.audio;voice.playbackRate=cfg.speed;await voice.play();metrics.playbacks.push({id:current.id,wall:clock(),source:film.currentTime,text:current.text,audio:current.audio});await fetch('/played',{method:'POST',headers:{'Content-Type':'application/json','X-Clock-Token':cfg.token},body:JSON.stringify(metrics.playbacks.at(-1))})}
+voice.addEventListener('ended',playNext);
+async function observe(){
+ if(busy||film.currentTime>=cfg.start+cfg.seconds||finished)return;
+ busy=true;const cursor=film.currentTime,batch=frames.length<=8?frames:Array.from({length:8},(_,i)=>frames[Math.round(i*(frames.length-1)/7)]);frames=[];lastObserved=cursor;
+ try{const r=await fetch('/observe',{method:'POST',headers:{'Content-Type':'application/json','X-Clock-Token':cfg.token},body:JSON.stringify({timeline,cursor,frames:batch,playback:{busy:!voice.paused,pending:queue.map(x=>({text:x.text})),recordTime:clock(),currentlySpeaking:voice.paused?'':current?.text||'',pendingThought,performance:performanceController.snapshot()}})});const value=await r.json();await perform(value.performance);metrics.observations.push({wall:clock(),source:cursor,action:value.action,error:value.error});if(['speak','continue','replay'].includes(value.action))pendingThought=value.action==='speak'&&!value.audio?{topic:value.topic,at:cursor}:null;if(value.audio){queue.push(value);await playNext()}if(value.action==='replay'&&!draining){film.currentTime=Math.max(cfg.start,cursor-value.seconds);frames=[];lastObserved=film.currentTime;lastCapture=-1}}catch(e){metrics.observations.push({error:e.message,wall:clock()})}finally{busy=false}
+}
+async function stop(){if(finished)return;finished=true;film.pause();await new Promise(resolve=>{recorder.onstop=resolve;recorder.stop()});const blob=new Blob(chunks,{type:recorder.mimeType});await fetch('/recording',{method:'POST',headers:{'X-Clock-Token':cfg.token},body:blob});metrics.duration=clock();await fetch('/metrics',{method:'POST',headers:{'X-Clock-Token':cfg.token,'Content-Type':'application/json'},body:JSON.stringify(metrics)});window.done=true;}
+window.start=async()=>{
+ await ctx.resume();await new Promise(resolve=>{if(film.readyState>=2)resolve();else film.onloadeddata=resolve});
+ if(cfg.start){film.currentTime=cfg.start;await new Promise(resolve=>film.addEventListener('seeked',resolve,{once:true}))}
+ const stream=out.captureStream(30);for(const track of mix.stream.getAudioTracks())stream.addTrack(track);
+ recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp9,opus',videoBitsPerSecond:12000000,audioBitsPerSecond:160000});recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data)};
+ started=ctx.currentTime;recordStart=performance.now();recorder.start(1000);await film.play();
+ const sample=document.createElement('canvas');sample.width=960;sample.height=540;const sg=sample.getContext('2d');
+ const timer=setInterval(()=>{
+   if(finished){clearInterval(timer);return}
+   if(cfg.replay){while(cfg.replayPerformances?.[performanceReplayIndex]&&clock()>=cfg.replayPerformances[performanceReplayIndex].at){perform(cfg.replayPerformances[performanceReplayIndex++].selected)}const next=cfg.replay[replayIndex];if(next&&clock()>=next.at&&voice.paused){queue.push(next);replayIndex++;playNext()}}
+   if(draining||film.currentTime>=cfg.start+cfg.seconds){draining=true;film.pause();if(voice.paused&&!queue.length&&!busy&&(!cfg.replay||replayIndex>=cfg.replay.length&&performanceReplayIndex>=(cfg.replayPerformances?.length||0)))stop();return}
+   if(film.currentTime-lastCapture>=.25){sg.drawImage(film,0,0,960,540);frames.push({at:film.currentTime,image:sample.toDataURL('image/jpeg',.8)});frames=frames.slice(-80);lastCapture=film.currentTime}
+   if(!cfg.replay&&film.currentTime-lastObserved>=cfg.observeStep&&frames.length&&!busy)observe();
+ },100);
+};window.appendPerformances=items=>cfg.replayPerformances.push(...items);
+window.offlineAdvance=async(first,last)=>{started=0;for(let i=first;i<last;i++){offlineTime=i/cfg.fps;while(cfg.replayPerformances?.[performanceReplayIndex]&&offlineTime>=cfg.replayPerformances[performanceReplayIndex].at)await perform(cfg.replayPerformances[performanceReplayIndex++].selected);model.update(1000/cfg.fps);animatePerformance();core.setParameterValueById('ParamMouthOpenY',0);core.update()}};
+window.captionLineCount=text=>{g.font='26px Microsoft YaHei';return wrapCaption(text,784).length};
+window.offlineFrame=async(t,url,text,mouth)=>{offlineTime=t;started=0;offlineCaption=text;offlineMouth=mouth;if(url!==offlineURL){const img=new Image();img.src=url;await img.decode();offlineImage=img;offlineURL=url}while(cfg.replayPerformances?.[performanceReplayIndex]&&t>=cfg.replayPerformances[performanceReplayIndex].at)await perform(cfg.replayPerformances[performanceReplayIndex++].selected);draw(t*1000);return out.toDataURL('image/jpeg',.96)};window.finish=stop;window.clockSnapshot=()=>({clock:clock(),source:film.currentTime,voice:voice.currentTime,voicePaused:voice.paused,rate:voice.playbackRate,queue:queue.length,metrics});window.ready=true;
+</script>

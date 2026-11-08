@@ -1,0 +1,18 @@
+{
+  "job_root": "D:/my-reaction/jobs",
+  "home": "D:/my-agent-data",
+  "persona": "D:/my-agent-data/SOUL.md",
+  "python": "D:/my-reaction/.venv/Scripts/python.exe",
+  "chromium": "D:/my-reaction/chrome/chrome.exe",
+  "port": 3113,
+  "launcher": "windows-task",
+  "jingyu_url": "http://127.0.0.1:61949",
+  "model_file": "大肥鱼.model3.json",
+  "materials": {
+    "episode01": {
+      "title": "授权的第一集",
+      "path": "D:/my-reaction/media/episode01.mp4",
+      "seconds": 1420
+    }
+  }
+}
