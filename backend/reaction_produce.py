@@ -35,7 +35,6 @@ from reaction_job_control import exclusive_job
 
 
 def produce(job):
-    if job.get('voice_studio') and job.get('afterword'):raise ValueError('Deferred IndexTTS2 afterword is not configured; use a bounded preview without afterword')
     for name in ('video','output','home','persona','chromium'):
         if not Path(job[name]).is_absolute():raise ValueError(f'{name} must be absolute')
     seconds=job['seconds']
@@ -78,8 +77,9 @@ def produce(job):
             if voice:
                 phase('dubbing')
                 final_viewing=root/'dubbed'
+                voice_file=root/'voice-settings.json';save(voice_file,voice)
                 run('reaction_dub.py',['--viewing',root/'viewing','--output',final_viewing,'--home',job['home'],'--persona',job['persona'],
-                    '--studio-config',voice['config'],'--studio-backend',voice['backend'],'--audio-python',voice['python'],'--reference',voice.get('reference','voice-reference')]+(['--timing-plan',voice['timing_plan']] if voice.get('timing_plan') else []))
+                    '--studio-config',voice['config'],'--studio-backend',voice['backend'],'--audio-python',voice['python'],'--reference',voice.get('reference','voice-reference')]+(['--voice-settings',voice_file] if voice.get('profile') else [])+(['--timing-plan',voice['timing_plan']] if voice.get('timing_plan') else []))
             phase('rendering')
             # A completed render is reusable; partial renders resume from frames.
             report_path=root/'render'/'render-report.json'
@@ -93,7 +93,7 @@ def produce(job):
             if job.get('afterword',False):
                 phase('afterword')
                 run('reaction_afterword.py',['--viewing',root/'viewing','--output',root/'afterword',
-                    '--home',job['home'],'--persona',job['persona']])
+                    '--home',job['home'],'--persona',job['persona']]+(['--voice-settings',voice_file,'--final-viewing',final_viewing] if voice and voice.get('profile') else []))
                 ending=Path(manifest.get('afterword_render',root/'afterword'/'render'))
                 if not (ending/'render-report.json').exists():
                     # Resume uses the streaming renderer only for the main film;
@@ -125,6 +125,10 @@ def produce(job):
             (root/'decode-validation.log').write_bytes(check.stderr)
             check.check_returncode()
             if report['source_end']!=seconds:raise ValueError('Wrong source trim')
+            import hashlib
+            save(root/'review.json',{'video':str(video),'sha256':hashlib.sha256(video.read_bytes()).hexdigest(),'source_seconds':seconds,'output_seconds':report['duration'],
+                'voice_profile':voice.get('profile',{}).get('id') if voice and isinstance(voice.get('profile'),dict) else None,
+                'verification':{'decode_errors':0,'fps':report['fps'],'source_audio_gain':report.get('source_audio_gain',1)},'publication':'awaiting human confirmation; no publishing tool'})
             phase('complete',video=str(video),source_seconds=seconds,output_seconds=report['duration'],
                   fps=report['fps'],speech_count=report['speech_count'],pauses=len(report.get('pauses',[])))
             return manifest

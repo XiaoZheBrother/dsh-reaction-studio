@@ -42,6 +42,7 @@ class ReactionJobs:
 
     def catalog(self):
         return {'materials':[{'id':k,'title':v['title'],'max_seconds':v['seconds']} for k,v in self.config['materials'].items()],
+                'production':{'voice':'confirmed IndexTTS2 B presets' if self.config.get('voice_studio') else 'legacy Edge TTS','timing':'actor-owned understanding and speech onset' if self.config.get('voice_studio') else 'legacy','human_review_required':True},
                 'workflow':'start -> status/observation -> optional pause_analysis/replay -> automatic normal-speed video; no publishing',
                 'jobs':[self.status(p.name) for p in self.root.iterdir() if p.is_dir() and (p/'job.json').exists()]}
 
@@ -64,6 +65,15 @@ class ReactionJobs:
         job.update(jingyu_url=self.config.get('jingyu_url','http://127.0.0.1:61949'),model_file=self.config.get('model_file','大肥鱼.model3.json'))
         if self.config.get('hearing_python'):
             job.update(hearing_python=self.config['hearing_python'],hearing_models=self.config['hearing_models'])
+        if material.get('hearing'):
+            job.pop('hearing_python',None);job.pop('hearing_models',None);job['hearing']=material['hearing']
+        if self.config.get('voice_studio'):
+            from reaction_voice import load_voice
+            job['voice_studio']={**self.config['voice_studio'],'profile':load_voice(self.config['voice_studio'])}
+            import hashlib
+            voice=job['voice_studio']
+            voice['config_snapshot']=json.loads(Path(voice['config']).read_text('utf-8-sig'))
+            voice['reference_sha256']=hashlib.sha256(Path(voice['config_snapshot']['assets'][voice.get('reference','voice-reference')]['path']).read_bytes()).hexdigest()
         with self.lock,exclusive_job(self.root/'.manager.lock'):
             if (path/'job.json').exists():
                 existing=json.loads((path/'job.json').read_text(encoding='utf-8'))
@@ -113,10 +123,15 @@ class ReactionJobs:
         launch=path/'launch.json'
         if running and launch.exists() and (not (path/'production.json').exists() or (path/'production.json').stat().st_mtime<json.loads(launch.read_text(encoding='utf-8'))['at']):phase='starting'
         if not running and phase not in ('complete','failed'):phase='interrupted'
+        final_path=path/'dubbed'/'viewing-state.json'
+        final=json.loads(final_path.read_text('utf-8')) if final_path.exists() else viewed
+        review_path=path/'review.json'
+        review=json.loads(review_path.read_text('utf-8')) if phase=='complete' and review_path.exists() else None
         consumed={e.get('control_id') for e in viewed.get('events',[])}
         pending=[json.loads(p.read_text(encoding='utf-8')) for p in (path/'controls').glob('*.json')]
         return {'job_id':job_id,'phase':phase,'running':running,'viewed_seconds':viewed.get('cursor',0),'source_seconds':job['seconds'],
-                'speech_count':len(viewed.get('playbacks',[])),'pause_count':len(viewed.get('pauses',[])),
+                'speech_count':len(final.get('playbacks',[])),'pause_count':len(final.get('pauses',[])),
+                'human_review_required':True,'review':review,'voice_profile':job.get('voice_studio',{}).get('profile',{}).get('id'),
                 'observation_mode':'audiovisual_event_units' if viewed.get('input',{}).get('attention_version')==3 else 'legacy',
                 'deliberations':sum(bool(e.get('deliberated')) for e in viewed.get('events',[])),
                 'video':manifest.get('video') if phase=='complete' else None,'error':manifest.get('error') if phase=='failed' else None,

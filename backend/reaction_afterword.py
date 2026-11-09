@@ -11,7 +11,7 @@ from reaction_performance import PERFORMANCE_PROMPT
 
 async def main(a):
     a.output.mkdir(parents=True,exist_ok=True)
-    state=json.loads((a.viewing/'viewing-state.json').read_text(encoding='utf-8'))
+    state=json.loads(((getattr(a,'final_viewing',None) or a.viewing)/'viewing-state.json').read_text(encoding='utf-8'))
     assert state.get('complete')
     end=state['input']['seconds'];last=max(0,end-.25)
     system,prefix,key=generator.load_context(a.home,a.persona,scene='reaction_offline')
@@ -23,7 +23,7 @@ async def main(a):
         return await nonempty_response(request)
     def obj(raw):
         return json.JSONDecoder().raw_decode(raw[raw.index('{'):])[0]
-    evidence={'viewed_up_to':end,'note':'以下是你自己的历史理解，可能含误判，并不是核实过的剧情事实。不能把旧猜测当结论，也不要使用下一集内容。',
+    evidence={'viewed_up_to':end,'coverage_note':'只看完本次授权片段，不代表已看完整集；片尾只总结已看到的内容，不虚构集数边界。','note':'以下是你自己的历史理解，可能含误判，并不是核实过的剧情事实。不能把旧猜测当结论，也不要使用下一集内容。',
         'chronological_observations':[{k:e.get(k) for k in ('cursor','story','interest')} for e in state['events'] if e['cursor']%60==0 and e['cursor']<=end],
         'latest_memory':state['plot_memory']}
     if state['input'].get('hearing'):
@@ -53,14 +53,27 @@ async def main(a):
     if not (a.output/'reflection.txt').exists():
         if (a.output/'feedback.txt').exists() and not (a.output/'grounding.json').exists():
             content.append({'type':'text','text':json.dumps({'your_previous_draft':(a.output/'previous-draft.txt').read_text(encoding='utf-8'),'fact_review_feedback':(a.output/'feedback.txt').read_text(encoding='utf-8')},ensure_ascii=False)})
-        content.append({'type':'text','text':'这一集已看完。请直接说出你的片尾总结，讲讲这一集发生了什么、你现在怎样理解这部动画，以及你自己的感受和还想知道的事。内容取舍和观点由你决定。不使用未看过的剧情，不把没弄清的字幕说话人或旧猜测当事实。这里只能从画面及字幕核对，没有原声输入；有些话是谁的内心独白，不确定就保留不确定。只输出会说出来的文字，表情动作另行选择。'})
+        content.append({'type':'text','text':'本次观看已结束。请直接说出你的片尾总结，讲讲已看部分发生了什么、你现在怎样理解这部动画，以及你自己的感受和还想知道的事。内容取舍和观点由你决定，不把样片说成已看完整集。不使用未看过的剧情，不把没弄清的字幕说话人或旧猜测当事实。这里只能从画面及字幕核对，没有原声输入；有些话是谁的内心独白，不确定就保留不确定。只输出会说出来的文字，表情动作另行选择。'})
         if state['input'].get('hearing'):
             content[-1]['text']=content[-1]['text'].replace('这里只能从画面及字幕核对，没有原声输入；','这里有机器听觉证据及画面，联合核对；')
         text=await call(content)
         (a.output/'reflection.txt').write_text(text,encoding='utf-8')
     text=(a.output/'reflection.txt').read_text(encoding='utf-8')
     audio=a.output/'voice-0.mp3';meta=a.output/'voice-0.jsonl';ff=imageio_ffmpeg.get_ffmpeg_exe()
-    if not audio.exists():
+    prepared=None
+    if getattr(a,'voice_settings',None):
+        from reaction_voice import prepare_voice
+        async def ask(prompt,context,parser):
+            feedback=''
+            for attempt in range(3):
+                raw=await call(json.dumps(context,ensure_ascii=False),prompt+feedback)
+                try:return parser(raw)
+                except (ValueError,KeyError,TypeError) as exc:
+                    if attempt==2:raise
+                    feedback='\n请修正选项格式：'+str(exc)
+        prepared=await prepare_voice(text,json.loads(a.voice_settings.read_text('utf-8')),a.output.parent/'voice-cache',ask,{'scene':'episode reflection','viewed_up_to':end})
+        audio=Path(prepared['path'])
+    elif not audio.exists():
         await edge_tts.Communicate(text,'zh-CN-XiaoyiNeural',rate='+10%',pitch='+14Hz',boundary='WordBoundary').save(str(audio),str(meta))
     duration=len(pcm_audio(ff,audio))/8000
     if not (a.output/'performance-plan.json').exists():
@@ -79,8 +92,12 @@ async def main(a):
                 feedback='\n上一版包含不可执行的选项，请自己从所提供的枚举中重新选，不要创造新的表情动作名称。上一版：'+raw
         save(a.output/'performance-plan.json',plans)
     plans=json.loads((a.output/'performance-plan.json').read_text(encoding='utf-8'))
-    words=[json.loads(x) for x in meta.read_text(encoding='utf-8').splitlines()]
-    event={'id':0,'text':text,'audio':'/audio/voice-0.mp3','captions':caption_pages(text,words),'duration':duration}
+    if prepared:
+        import shutil
+        shutil.copyfile(audio,a.output/'voice-0.wav');captions=prepared['subtitles'];audio_name='voice-0.wav'
+    else:
+        words=[json.loads(x) for x in meta.read_text(encoding='utf-8').splitlines()];captions=caption_pages(text,words);audio_name='voice-0.mp3'
+    event={'id':0,'text':text,'audio':'/audio/'+audio_name,'captions':captions,'duration':duration}
     save(a.output/'decisions.json',{'prefixEnabled':bool(prefix.get('enabled')),'events':[event]})
     save(a.output/'clock-metrics.json',{'speed':1,'playbacks':[{'id':0,'wall':1}],
         'performances':[{'wall':p['at']+1,'selected':p['performance']} for p in sorted(plans,key=lambda p:p['at'])]})
@@ -90,4 +107,5 @@ async def main(a):
 if __name__=='__main__':
     p=argparse.ArgumentParser()
     for name in ['viewing','output','home','persona']:p.add_argument('--'+name,type=Path,required=True)
+    p.add_argument('--voice-settings',type=Path);p.add_argument('--final-viewing',type=Path)
     asyncio.run(main(p.parse_args()))

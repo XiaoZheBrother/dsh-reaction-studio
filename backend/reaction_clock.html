@@ -47,9 +47,9 @@ function draw(now){
  if(cfg.epilogue){
    const fill=g.createLinearGradient(574,70,1238,443);fill.addColorStop(0,'#163d58');fill.addColorStop(1,'#102333');g.fillStyle=fill;g.fillRect(574,70,664,373.5);
    g.fillStyle='#acdce6';g.font='20px Microsoft YaHei';g.fillText(cfg.episodeLabel+' / 观后手记',614,128);
-   g.fillStyle='#fff1cb';g.font='bold 42px Microsoft YaHei';g.fillText('看完这一集',614,211);
+   g.fillStyle='#fff1cb';g.font='bold 42px Microsoft YaHei';g.fillText('看完之后',614,211);
    g.strokeStyle='#7cabb7';g.beginPath();g.moveTo(614,242);g.lineTo(1192,242);g.stroke();
-   g.fillStyle='#d4e9ed';g.font='25px Microsoft YaHei';g.fillText('这一集的故事',614,294);g.fillText('我现在的理解',614,345);g.fillText('留下的感受与疑问',614,396);
+   g.fillStyle='#d4e9ed';g.font='25px Microsoft YaHei';g.fillText('刚刚看到的故事',614,294);g.fillText('我现在的理解',614,345);g.fillText('留下的感受与疑问',614,396);
  }else if(cfg.offline&&offlineImage)g.drawImage(offlineImage,574,70,664,373.5);else if(film.readyState>=2)g.drawImage(film,574,70,664,373.5);
  g.drawImage(app.view,30,208,330,495);
  g.fillStyle='rgba(8,24,42,.78)';g.beginPath();g.roundRect(30,28,420,92,18);g.fill();
