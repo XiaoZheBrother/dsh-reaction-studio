@@ -25,11 +25,15 @@ class DubbingTests(unittest.IsolatedAsyncioTestCase):
             def synth(cmd,**kw):
                 job=cmd[cmd.index('--project')+1]
                 (workspace/job/'prepared.json').write_text(json.dumps({'audio':'gen-test','duration':4,'subtitles':[]}))
-            args=SimpleNamespace(viewing=view,output=root/'final',home=root,persona=root/'persona',studio_config=cfg,studio_backend=root,audio_python='python',reference='ref')
+            timing=root/'timing.json';timing.write_text(json.dumps({'0':{'evidence_ready_at':10.5,'considered_at':11,'understood_at':11.5,'speak_at':12.3,'reason':'wait for the meaning'}}))
+            args=SimpleNamespace(viewing=view,output=root/'final',home=root,persona=root/'persona',studio_config=cfg,studio_backend=root,audio_python='python',reference='ref',timing_plan=timing)
             with patch('reaction_dub.generator.load_context',return_value=([{'content':'persona and memory'}],{'enabled':True,'prefix':'kept'},'private')),patch('reaction_dub.Reactor',return_value=Engine()),patch('reaction_dub.subprocess.run',side_effect=synth):
                 await main(args)
             result=json.loads((args.output/'viewing-state.json').read_text())
             self.assertEqual((result['pauses'][0]['duration'],result['events'][1]['output_at']),(4,24))
+            self.assertEqual(result['events'][0]['output_at'],12.3)
+            self.assertEqual(result['performances'][0]['wall'],12.3)
+            self.assertEqual(result['pauses'][0]['source'],12.3)
             self.assertEqual(result['events'][0]['text'],'my words')
             self.assertEqual((view/'viewing-state.json').read_text(),data)
             self.assertFalse(any(e.get('duration_estimated') for e in result['events']))

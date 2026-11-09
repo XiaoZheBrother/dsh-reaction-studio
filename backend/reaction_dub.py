@@ -6,6 +6,7 @@ from reaction_server import Reactor
 from live_pilot_chat import generator
 from reaction_pacing import PlaybackTimeline, REVIEW_PROMPT, parse_review
 from reaction_tools import execute_playback_tool
+from reaction_timing import validate_timing
 
 
 def parse_delivery(raw):
@@ -38,9 +39,15 @@ async def main(a):
         if k not in original:continue
         if k in ('tool_results','playback_tool_results','applied_tools'):state.pop(k,None)
     studio_cfg=json.loads(a.studio_config.read_text('utf-8'))
+    timings=json.loads(a.timing_plan.read_text('utf-8')) if getattr(a,'timing_plan',None) else {}
     for index,source in enumerate(original['events']):
         event=copy.deepcopy(source);event.pop('tool_result',None);event.pop('duration_estimated',None)
-        at=PlaybackTimeline(state['pauses']).output_at(event['cursor']);event['output_at']=at
+        onset=event['cursor']
+        if str(event['id']) in timings and event.get('audio'):
+            plan=timings[str(event['id'])]
+            event['reaction_timing']=validate_timing(plan,evidence_ready=plan['evidence_ready_at'],considered_at=max(event['cursor'],plan['considered_at']),source_end=original['input']['seconds'])
+            onset=event['reaction_timing']['speak_at']
+        at=PlaybackTimeline(state['pauses']).output_at(onset);event['output_at']=at
         if event.get('audio'):
             receipt=a.output/f'dub-{event["id"]}.json'
             if receipt.exists():
@@ -77,15 +84,17 @@ async def main(a):
                 # Fit short utterances on the full multiline panel instead of splitting into small pages.
                 if len(event['text'])<=112:event['captions']=[{'start':0,'end':event['duration'],'text':event['text']}]
                 call={'name':'reaction_pause','arguments':{'reason':review['reason'],'resume':'speech_end'}} if review['choice']=='pause' else {'name':'reaction_continue','arguments':{}}
-                event['tool_result']=execute_playback_tool(state,call,call_id=f'dub-{event["id"]}',cursor=event['cursor'],speech_duration=event['duration'])
+                event['tool_result']=execute_playback_tool(state,call,call_id=f'dub-{event["id"]}',cursor=onset,speech_duration=event['duration'])
                 event['playback_tool']=call
                 state['voice_until']=at+event['duration']
-                state['playbacks'].append({'id':event['id'],'wall':at,'source':event['cursor'],'text':event['text']})
+                state['playbacks'].append({'id':event['id'],'wall':at,'source':onset,'text':event['text']})
         state['events'].append(event)
-        state['performances'].append({'wall':at,'source':event['cursor'],'selected':event['performance']})
+        state['performances'].append({'wall':at,'source':onset,'selected':event['performance']})
         save(a.output/'viewing-state.json',state)
         print(json.dumps({'dubbed_source':event['cursor'],'spoken':bool(event.get('audio'))}),flush=True)
     state['complete']=True;state['dubbing']={'provider':'IndexTTS2','prefixEnabled':bool(prefix.get('enabled')),'timing':'measured','source':str(a.viewing)}
+    state['performances'].sort(key=lambda p:p['wall'])
+    state['playbacks'].sort(key=lambda p:p['wall'])
     save(a.output/'viewing-state.json',state)
     save(a.output/'decisions.json',{'speed':1,'prefixEnabled':bool(prefix.get('enabled')),'events':state['events']})
     save(a.output/'clock-metrics.json',{'speed':1,'playbacks':state['playbacks'],'performances':state['performances'],'pauses':state['pauses']})
@@ -95,4 +104,5 @@ if __name__=='__main__':
     p=argparse.ArgumentParser()
     for k in ('viewing','output','home','persona','studio-config','studio-backend'):p.add_argument('--'+k,type=Path,required=True)
     p.add_argument('--audio-python',required=True);p.add_argument('--reference',default='voice-reference')
+    p.add_argument('--timing-plan',type=Path)
     asyncio.run(main(p.parse_args()))

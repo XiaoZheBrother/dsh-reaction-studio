@@ -79,7 +79,7 @@ def produce(job):
                 phase('dubbing')
                 final_viewing=root/'dubbed'
                 run('reaction_dub.py',['--viewing',root/'viewing','--output',final_viewing,'--home',job['home'],'--persona',job['persona'],
-                    '--studio-config',voice['config'],'--studio-backend',voice['backend'],'--audio-python',voice['python'],'--reference',voice.get('reference','voice-reference')])
+                    '--studio-config',voice['config'],'--studio-backend',voice['backend'],'--audio-python',voice['python'],'--reference',voice.get('reference','voice-reference')]+(['--timing-plan',voice['timing_plan']] if voice.get('timing_plan') else []))
             phase('rendering')
             # A completed render is reusable; partial renders resume from frames.
             report_path=root/'render'/'render-report.json'
