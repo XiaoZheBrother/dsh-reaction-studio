@@ -22,7 +22,7 @@ def parse_intent(raw,start,cursor):
             # correctly use null for that union branch; do not reject its choice.
             seconds=obj.get('seconds',5) if obj['action']=='replay' else 5
             if isinstance(seconds,bool) or not isinstance(seconds,(float,int)) or not math.isfinite(seconds):raise ValueError('invalid replay')
-            found.append({**obj,'focus_at':at,'seconds':max(1,min(10,seconds))})
+            found.append({**obj,'delivery':obj.get('delivery','overlay'),'focus_at':at,'seconds':max(1,min(10,seconds))})
         except (ValueError,json.JSONDecodeError):continue
     if len(found)!=1:raise ValueError('expected one valid intent')
     return found[0]

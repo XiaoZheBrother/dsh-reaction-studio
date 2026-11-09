@@ -8,6 +8,12 @@ from reaction_intent import parse_intent
 
 
 class EpisodeProductionTests(unittest.TestCase):
+    def test_optional_delivery_is_normalized_without_overriding_pause(self):
+        result=parse_intent('{"action":"speak","focus_at":150}',0,150)
+        self.assertEqual(result['delivery'],'overlay')
+        result=parse_intent('{"action":"speak","delivery":"pause","pause_reason":"think this through"}',0,150)
+        self.assertEqual(result['delivery'],'pause')
+
     def test_inactive_replay_field_does_not_reject_silence(self):
         result=parse_intent('{"action":"continue","focus_at":null,"seconds":null}',0,1372)
         self.assertEqual(result['action'],'continue')

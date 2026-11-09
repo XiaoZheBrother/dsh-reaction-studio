@@ -206,6 +206,9 @@ async def main(args):
                 if not text.strip():raise ValueError('Empty chosen speech')
                 event['text']=text
             state['inflight']=event;checkpoint_now()
+        # Older checkpoints may predate optional-field normalization. Preserve
+        # any explicit pause; omission has always meant overlay in the parser.
+        event.setdefault('delivery','overlay')
         if deferred_voice and event.get('text') and not event.get('pacing_final'):
             # Provisional occupancy is not a speech quota. The actor revisits measured timing after synthesis.
             duration=max(.5,len(event['text'])/5)
