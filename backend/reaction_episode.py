@@ -101,7 +101,7 @@ async def main(args):
         gate = system[0]['content']+'\n'+INTENT_PROMPT+'\n'+TURN_PROMPT+'\n'+PACING_PROMPT+'\n'+PERFORMANCE_PROMPT
         gate = gate.replace('没有原声音频输入，不臆测音色。', '有带时间戳的机器听觉证据，原始波形未直接传给你。声纹与角色归属可能有误，不把候选当事实。')
     if deferred_voice:
-        gate+='\n这是离线重看制作，保留原有记忆，但仅依据当前已播放的材料作出反应，不假装初见。配音稍后合成，speech_awareness的时长是临时估计；并非要求填满时间。'
+        gate+='\n这是离线观看制作，仅依据当前已播放的材料作出反应，不使用未播放的剧情。观看视角按本次任务要求，不能从离线制作推断这是重看。配音稍后合成，speech_awareness的时长是临时估计；并非要求填满时间。'
     async def complete(messages, structured=False):
         async def request():
             return (await engine.complete(messages,key,structured=structured))[0]
