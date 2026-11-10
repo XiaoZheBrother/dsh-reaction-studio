@@ -54,7 +54,7 @@ def produce(job):
         def run(script,args):
             subprocess.run([sys.executable,'-u',str(backend/script),*map(str,args)],check=True,
                 stdout=sys.stdout,stderr=sys.stderr,
-                env={**os.environ,'PYTHONUTF8':'1'},
+                env={**os.environ,'PYTHONUTF8':'1','FEIYU_REACTION_INTERACTION_VERSION':str(job.get('interaction_version',3))},
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         avatar=['--episode-label',job.get('episode_label','这一集'),'--character-name',job.get('character_name','大肥鱼'),'--jingyu-url',job.get('jingyu_url','http://127.0.0.1:61949'),'--model-file',job.get('model_file','大肥鱼.model3.json')]
         if job.get('model_dir') and job.get('cubism_core'):avatar += ['--model-dir',job['model_dir'],'--cubism-core',job['cubism_core']]

@@ -26,6 +26,10 @@ async def main(a):
     evidence={'viewed_up_to':end,'coverage_note':'只看完本次授权片段，不代表已看完整集；片尾只总结已看到的内容，不虚构集数边界。','note':'以下是你自己的历史理解，可能含误判，并不是核实过的剧情事实。不能把旧猜测当结论，也不要使用下一集内容。',
         'chronological_observations':[{k:e.get(k) for k in ('cursor','story','interest')} for e in state['events'] if e['cursor']%60==0 and e['cursor']<=end],
         'latest_memory':state['plot_memory']}
+    if state.get('experience_state'):
+        from reaction_experience import snapshot
+        evidence['continuous_understanding']=snapshot(state['experience_state'])
+        evidence['your_attention']=state.get('actor_attention','')
     if state['input'].get('hearing'):
         from reaction_attention import heard_until
         hearing=json.loads(Path(state['input']['hearing']).read_text(encoding='utf-8'))

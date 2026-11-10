@@ -5,6 +5,26 @@ from unittest.mock import patch
 from reaction_dub import main,parse_delivery
 
 class DubbingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_v4_preserves_long_actor_pause_without_editorial_review(self):
+        with tempfile.TemporaryDirectory() as t:
+            root=Path(t);view=root/'view';view.mkdir();workspace=root/'audio';(workspace/'generated').mkdir(parents=True)
+            (workspace/'generated/gen-test.wav').write_bytes(b'audio')
+            source={'complete':True,'input':{'seconds':180,'interaction_version':4},'events':[{'id':0,'cursor':10,'text':'original words','audio':'deferred.wav','delivery':'pause','performance':None}]}
+            (view/'viewing-state.json').write_text(json.dumps(source));cfg=root/'config.json';cfg.write_text(json.dumps({'workspace':str(workspace)}))
+            requests=[]
+            class Engine:
+                async def complete(self,messages,key):
+                    requests.append(messages)
+                    return json.dumps({'intent':'actor tone','emotion_vector':[0]*8}),{}
+            def synth(cmd,**kw):
+                job=cmd[cmd.index('--project')+1];(workspace/job/'prepared.json').write_text(json.dumps({'audio':'gen-test','duration':30,'subtitles':[]}))
+            args=SimpleNamespace(viewing=view,output=root/'final',home=root,persona=root/'persona',studio_config=cfg,studio_backend=root,audio_python='python',reference='ref')
+            with patch('reaction_dub.generator.load_context',return_value=([{'content':'persona'}],{'enabled':True,'prefix':'kept'},'private')),patch('reaction_dub.Reactor',return_value=Engine()),patch('reaction_dub.subprocess.run',side_effect=synth):await main(args)
+            result=json.loads((args.output/'viewing-state.json').read_text())
+            self.assertEqual(result['events'][0]['text'],'original words')
+            self.assertEqual(result['pauses'][0]['duration'],30)
+            self.assertEqual(len(requests),1)  # Tone only: no routine rewrite or shortening request.
+
     def test_invalid_delivery_rejected(self):
         for vector in ([0]*7,[float('nan')]*8,[True]*8):
             with self.assertRaises(ValueError):parse_delivery(json.dumps({'intent':'my choice','emotion_vector':vector}))

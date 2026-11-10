@@ -11,6 +11,9 @@ async def choose_onset(event,original,viewing,ask,voice_until,pauses):
              'previous_voice_until_output':voice_until,'existing_pauses':pauses,
              'note':'只提供当时已经看过的内容。后面的剧情尚不可用。所给时长是配音长度，不能当作已等待时长。'}
     content['valid_time_range']={'understood_at_min':cursor,'speak_at_max':end,'order':'understood_at < speak_at; both are absolute source seconds, not delay amounts'}
+    if event.get('enforce_source_end') and event.get('delivery')!='pause':
+        content['valid_time_range']['speak_at_max']=end-event['duration']
+        content['valid_time_range']['note']='Overlay speech must finish inside this source segment; defer if no valid opening remains.'
     if original['input'].get('hearing'):
         from reaction_attention import heard_until
         hearing=json.loads(Path(original['input']['hearing']).read_text('utf-8'))
@@ -25,6 +28,7 @@ async def choose_onset(event,original,viewing,ask,voice_until,pauses):
         if value.get('choice')=='defer' and isinstance(value.get('reason'),str):return value
         if value.get('choice')!='speak':raise ValueError('Choose speak or defer')
         result=validate_timing(value,evidence_ready=cursor,considered_at=cursor,source_end=end)
+        if result['speak_at']>content['valid_time_range']['speak_at_max']:raise ValueError('Speech exceeds remaining source; choose an available opening or defer')
         if PlaybackTimeline(pauses).output_at(result['speak_at'])<voice_until:raise ValueError('Choose an opening after your previous utterance finishes, or defer')
         return result
     return await ask('你已经选择了这句反应，现在决定自然开口的时机。观察时刻不是开口时刻。判断这次要读懂字幕、听完已收到的对白、理解反差需要怎样的停顿；简短惊叹和需要联系上下文的吐槽可以不同。不预设固定一秒，也不采用模型请求的耗时。understood_at 是理解完成时刻，不是首次看见字幕；speak_at 是开始说话的源视频秒数，必须晚于理解完成，并且不超过本片段结束。若此刻不值得说、需要更多信息或没合适的开口时机，可以defer取消。只返回JSON {"choice":"speak/defer","understood_at":数字,"speak_at":数字,"reason":"这一处这样选择的原因"}。不要改台词或猜后续。',{'evidence':content,'source_end':end,'_frames':frames},parse)

@@ -3,7 +3,7 @@
 Produces the same speech/performance timeline consumed by the fixed-step renderer.
 Only this production directory is written; persona and formal memory stay read-only.
 """
-import argparse, asyncio, base64, hashlib, json, math, subprocess, time
+import argparse, asyncio, base64, hashlib, json, math, os, subprocess, time
 from pathlib import Path
 import edge_tts, imageio_ffmpeg
 from reaction_server import Reactor
@@ -71,6 +71,8 @@ async def main(args):
     ff=imageio_ffmpeg.get_ffmpeg_exe(); frames=args.output/'observed-frames'
     signature={'video':str(args.video.resolve()),'size':args.video.stat().st_size,'seconds':args.seconds,'step':args.step,'pacing_version':2}
     deferred_voice=getattr(args,'deferred_voice',False)
+    v4=os.environ.get('FEIYU_REACTION_INTERACTION_VERSION')=='4'
+    if v4:signature['interaction_version']=4
     if deferred_voice:signature['voice_stage']='deferred-v1'
     hearing_path = getattr(args, 'hearing', None)
     hearing = json.loads(hearing_path.read_text(encoding='utf-8')) if hearing_path else None
@@ -102,6 +104,9 @@ async def main(args):
         gate = gate.replace('没有原声音频输入，不臆测音色。', '有带时间戳的机器听觉证据，原始波形未直接传给你。声纹与角色归属可能有误，不把候选当事实。')
     if deferred_voice:
         gate+='\n这是离线观看制作，仅依据当前已播放的材料作出反应，不使用未播放的剧情。观看视角按本次任务要求，不能从离线制作推断这是重看。配音稍后合成，speech_awareness的时长是临时估计；并非要求填满时间。'
+    if v4:
+        from reaction_experience import STATE_PROMPT,CHOICE_PROMPT,EXPRESSION_PROMPT,apply_updates,snapshot,expression_context
+        gate=system[0]['content']+'\n'+INTENT_PROMPT+'\n'+CHOICE_PROMPT+'\n'+PERFORMANCE_PROMPT
     async def complete(messages, structured=False):
         async def request():
             return (await engine.complete(messages,key,structured=structured))[0]
@@ -152,17 +157,25 @@ async def main(args):
                             'plot_memory':state['plot_memory'], 'hearing':recent_cues,
                             'speaker_hypotheses':{k:v[-3:] for k,v in state.get('speaker_hypotheses',{}).items()},
                             'recent_observations':[e.get('observation') for e in past[-12:] if e.get('observation')]}
+                if v4:evidence['continuous_understanding']=snapshot(state.get('experience_state'))
                 observation_content = [{'type':'text','text':json.dumps(evidence,ensure_ascii=False)}] + content[1:]
                 for attempt in range(3):
-                    observed = await complete([{'role':'system','content':OBSERVE_PROMPT},{'role':'user','content':observation_content}],structured=True)
+                    observed = await complete([{'role':'system','content':OBSERVE_PROMPT+('\n'+STATE_PROMPT if v4 else '')},{'role':'user','content':observation_content}],structured=True)
                     try:
-                        observation = parse_observation(observed,recent_cues);break
-                    except ValueError:
+                        observation = parse_observation(observed,recent_cues)
+                        if v4:state['experience_state']=apply_updates(state.get('experience_state'),observation.get('updates',[]),cursor)
+                        break
+                    except (ValueError, TypeError) as error:
+                        save(args.output/f'observation-format-{len(past)}-{attempt}.json',{'cursor':cursor,'raw':observed,'error':str(error)})
                         if attempt == 2:raise
+                        observation_content.append({'type':'text','text':json.dumps({'invalid_previous_output':observed,'validation_error':str(error),'instruction':'修正输出格式和字段枚举，保持证据边界，不增加新事实。updates.kind只能是entity/relation/event/question/expectation，status只能是tentative/confirmed/revised/rejected/open/resolved。返回完整观察JSON。'},ensure_ascii=False)})
                 signal = turn_signal(observation,state.get('considered_units',[]))
                 content.append({'type':'text','text':json.dumps({'accumulated_observation':observation,'hearing':recent_cues,
                     'speech_awareness':speech_awareness(past,output_at),
                     'since_last_deliberation':[e.get('observation') for e in past if e['cursor']>state.get('last_deliberation_at',0)][-20:]},ensure_ascii=False)})
+                if v4:
+                    content=[{'type':'text','text':json.dumps({'cursor':cursor,'current_experience':observation['understanding'],'change':observation['change'],'your_attention':state.get('actor_attention',''),'understanding':snapshot(state.get('experience_state')),'speech_awareness':speech_awareness(past,output_at),'playback':{'busy':busy},'available_tools':TOOLS},ensure_ascii=False)}]
+                    if control:content.append({'type':'text','text':json.dumps({'main_dialogue_tool_request':control},ensure_ascii=False)})
             if hearing is not None and (busy or not (signal or control)):
                 raw=json.dumps({'action':'continue','story':observation['understanding'][:1800],'interest':observation['change'][:400],
                     'reason':'持续观察，尚无新的完整事件或突发变化供自主审议' if not busy else '持续观察，发言仍在进行；积累理解，不排队新台词',
@@ -189,6 +202,7 @@ async def main(args):
                              deliberated=not busy and bool(signal or control),turn_signal=signal)
             if control:event['control_id']=control['id']
             event['performance']=await selected_performance(intent)
+            if v4 and not busy and (signal or control):state['actor_attention']=intent.get('interest',state.get('actor_attention',''))
             if intent['action']=='replay':
                 event['replay_tool_result']=execute_playback_tool(state,{'name':'reaction_replay','arguments':{'seconds':intent['seconds']}},call_id=f"replay-{event['id']}",cursor=cursor)
                 replay_content=[{'type':'text','text':f'按你的选择重看已看到的 {max(0,cursor-intent["seconds"]):.2f} 至 {cursor:.2f} 秒。没有新剧情。'}]
@@ -200,9 +214,12 @@ async def main(args):
                 event['performance']=await selected_performance(revision)
             if event['action']=='speak' and not busy:
                 expression=system[0]['content']+'\n'+SPEECH_PROMPT+'\n'+PACING_PROMPT
+                if v4:
+                    expression=system[0]['content']+'\n'+EXPRESSION_PROMPT
+                    content=[{'type':'text','text':json.dumps(expression_context(state,event,speech_awareness(past,output_at)),ensure_ascii=False)}]
                 if hearing is not None:
                     expression=expression.replace('没有原声音频输入，不臆测音色。','听觉证据来自带时间戳的机器转写和声纹候选，不能把不确定的角色归属说成事实。')
-                text=await complete(prefixed([{'role':'system','content':expression},{'role':'user','content':content+[{'type':'text','text':json.dumps({'your_intent':event},ensure_ascii=False)}]}]))
+                text=await complete(prefixed([{'role':'system','content':expression},{'role':'user','content':content if v4 else content+[{'type':'text','text':json.dumps({'your_intent':event},ensure_ascii=False)}]}]))
                 if not text.strip():raise ValueError('Empty chosen speech')
                 event['text']=text
             state['inflight']=event;checkpoint_now()
@@ -238,7 +255,15 @@ async def main(args):
                     'pause_reason':event.get('pause_reason',''),'prior_reviews':event.get('pacing_reviews',[]),
                     'recent_delivery':[{'source':e['cursor'],'delivery':e.get('delivery'),'duration':e.get('duration')} for e in state['events'] if e.get('audio')][-5:]}
                 review_prompt=REVIEW_PROMPT+'\n播放工具：'+json.dumps(TOOLS,ensure_ascii=False)+'\n若choice=pause，请同时返回tool_call={"name":"reaction_pause","arguments":{"reason":"你暂停的原因","resume":"speech_end"}}；keep对应reaction_continue，arguments为空对象；shorten/defer不调用播放工具。'+('已自行修改两次，请在keep/pause/defer中作最终决定。' if revision>=2 else '')
+                if v4:
+                    from reaction_experience import ARRANGE_PROMPT,playback_constraints
+                    constraints=playback_constraints(event['output_at'],duration,state['voice_until'],PlaybackTimeline(state['pauses']).output_at(args.seconds),event['delivery'])
+                    review_context['constraints']=constraints
+                    review_prompt=ARRANGE_PROMPT+'\n本播放路径在当前时刻开口，不能与上一句话重叠。'+('请选择keep/pause/defer作为最终安排。' if revision>=2 else '')
                 for attempt in range(3):
+                    if v4 and not any(constraints.values()):
+                        review={'choice':'pause' if event['delivery']=='pause' else 'keep','reason':'No playback conflict; preserve actor wording and delivery','text':''}
+                        break
                     if event.get('control_id') and event.get('delivery')=='pause':
                         review={'choice':'pause','reason':event['pause_reason'],'text':'','tool_call':{'name':'reaction_pause','arguments':{'reason':event['pause_reason'],'resume':'speech_end'}}}
                         break
@@ -246,6 +271,10 @@ async def main(args):
                         {'role':'user','content':json.dumps(review_context,ensure_ascii=False)}]))
                     try:
                         review=parse_review(raw)
+                        if v4 and review['choice'] in ('keep','pause') and constraints['overlap_seconds']:
+                            raise ValueError('Speech would overlap previous utterance')
+                        if v4 and review['choice']=='keep' and constraints['beyond_source_seconds']:
+                            raise ValueError('Overlay would exceed source end')
                         if revision>=2 and review['choice']=='shorten':raise ValueError('Expected final pacing choice')
                         break
                     except ValueError:

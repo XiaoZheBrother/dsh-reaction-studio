@@ -20,6 +20,7 @@ def parse_delivery(raw):
 async def main(a):
     a.output.mkdir(parents=True,exist_ok=True)
     original=json.loads((a.viewing/'viewing-state.json').read_text('utf-8'))
+    v4=original.get('input',{}).get('interaction_version')==4
     if not original.get('complete'):raise ValueError('Finish watching before final dubbing')
     system,prefix,key=generator.load_context(a.home,a.persona,scene='reaction_offline')
     engine=Reactor(a.home,a.persona,max_calls=600)
@@ -76,10 +77,18 @@ async def main(a):
                         subprocess.run([a.audio_python,str(worker),'--config',str(a.studio_config),'--project',project,'--job','dub'],check=True,env={**os.environ,'PYTHONUTF8':'1'},creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
                         audio=json.loads((work/'prepared.json').read_text('utf-8'))
                     conflict=max(0,state['voice_until']-at)
-                    review=await ask(REVIEW_PROMPT+'\n这是离线配音后的核对，只用给出的已看信息。你可以取消或缩短，不为容纳长话自动暂停。若存在与上一句重叠，keep不能通过；若选择暂停但上一句仍在说，也不能通过，请自己缩短/取消当前或另行处理。不要补后续剧情。'+('这次请选择keep/pause/defer作为最终决定。' if revision==3 else ''),dict(evidence,your_text=text,actual_voice_seconds=audio['duration'],previous_voice_overlap_seconds=conflict,selected_delivery=event.get('delivery'),prior_reviews=reviews),parse_review)
+                    if v4:
+                        from reaction_experience import ARRANGE_PROMPT,playback_constraints
+                        constraints=playback_constraints(at,audio['duration'],state['voice_until'],PlaybackTimeline(state['pauses']).output_at(original['input']['seconds']),event.get('delivery','overlay'))
+                        if not any(constraints.values()):
+                            review={'choice':'pause' if event.get('delivery')=='pause' else 'keep','reason':'No playback conflict; preserve original wording and actor-selected delivery','text':''}
+                        else:
+                            review=await ask(ARRANGE_PROMPT,dict(evidence,your_text=text,actual_voice_seconds=audio['duration'],constraints=constraints,selected_delivery=event.get('delivery'),prior_reviews=reviews),parse_review)
+                    else:
+                        review=await ask(REVIEW_PROMPT+'\n这是离线配音后的核对，只用给出的已看信息。你可以取消或缩短，不为容纳长话自动暂停。若存在与上一句重叠，keep不能通过；若选择暂停但上一句仍在说，也不能通过，请自己缩短/取消当前或另行处理。不要补后续剧情。'+('这次请选择keep/pause/defer作为最终决定。' if revision==3 else ''),dict(evidence,your_text=text,actual_voice_seconds=audio['duration'],previous_voice_overlap_seconds=conflict,selected_delivery=event.get('delivery'),prior_reviews=reviews),parse_review)
                     reviews.append({'delivery':delivery,'text':text,'duration':audio['duration'],'review':review})
                     if review['choice']=='shorten' and revision<3:text=review['text'];continue
-                    if conflict and review['choice']!='defer':
+                    if conflict and review['choice']!='defer' and not (v4 and voice_settings and voice_settings.get('autonomous_timing',True)):
                         raise ValueError('Actor selected overlapping speech; needs explicit revision')
                     if review['choice']=='shorten':raise ValueError('No final pacing choice')
                     chosen={'text':text,'audio':audio,'delivery':delivery,'review':review,'reviews':reviews};save(receipt,chosen);break
@@ -88,7 +97,7 @@ async def main(a):
             if voice_settings and voice_settings.get('autonomous_timing',True) and review['choice']!='defer' and str(event['id']) not in timings:
                 from reaction_onset import choose_onset
                 if 'timing' not in chosen:
-                    timing_event={**event,'duration':chosen['audio']['duration'],'delivery':'pause' if review['choice']=='pause' else 'overlay'}
+                    timing_event={**event,'duration':chosen['audio']['duration'],'delivery':'pause' if review['choice']=='pause' else 'overlay','enforce_source_end':v4}
                     chosen['timing']=await choose_onset(timing_event,original,a.viewing,ask,state['voice_until'],state['pauses'])
                     save(receipt,chosen)
                 event['reaction_timing']=chosen['timing']
