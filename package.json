@@ -9,7 +9,11 @@
     "dsh-plugin",
     "reaction",
     "live2d",
-    "agent"
+    "agent",
+    "deepseek-harness",
+    "video-understanding",
+    "reaction-video",
+    "text-to-speech"
   ],
   "author": {
     "name": "XiaoZheBrother",
@@ -29,7 +33,8 @@
     "README.md",
     "NOTICE.md",
     "LICENSE",
-    "docs/*.md"
+    "docs/*.md",
+    "llms.txt"
   ],
   "engines": {
     "node": ">=22.19.0"

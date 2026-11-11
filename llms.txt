@@ -1,0 +1,13 @@
+# dsh-reaction-studio
+
+> A DeepSeek Harness (DSH) plugin for offline video reaction: chronological audiovisual observation, autonomous speech and pauses, and subtitle, voice, and Live2D video composition.
+
+DeepSeek Harness plugin documentation. Capabilities and installation limits are version-specific; consult the README and release notes.
+
+## Documentation
+
+- [README](https://raw.githubusercontent.com/XiaoZheBrother/dsh-reaction-studio/main/README.md): Chinese overview, capabilities, dependencies, screenshots, installation and limitations.
+- [Agent guide](https://raw.githubusercontent.com/XiaoZheBrother/dsh-reaction-studio/main/docs/agent-guide.md): Entry points, minimal configuration, tool parameters, results and completion checks.
+- [Package metadata](https://raw.githubusercontent.com/XiaoZheBrother/dsh-reaction-studio/main/package.json): Current source version and dependency declarations.
+- [Releases](https://github.com/XiaoZheBrother/dsh-reaction-studio/releases): Published packages; source and release capabilities may differ.
+- [Issues](https://github.com/XiaoZheBrother/dsh-reaction-studio/issues): Report reproducible problems.

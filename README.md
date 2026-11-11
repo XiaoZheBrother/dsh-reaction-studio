@@ -1,5 +1,33 @@
 # 大肥鱼陪看工作室 · dsh-reaction-studio
 
+**离线陪看与视频制作 / Offline Reaction Video Studio**
+
+A DeepSeek Harness (DSH) plugin for offline video reaction: chronological audiovisual observation, autonomous speech and pauses, and subtitle, voice, and Live2D video composition.
+
+**适用：** 观看授权视频、自主暂停分析、制作 reaction。**边界：** 离线制作，依赖直播插件公共组件；不自动发布。
+
+[Agent 快速接入 / Agent quickstart](docs/agent-guide.md) · [文档索引 / llms.txt](llms.txt) · [发行版本 / Releases](https://github.com/XiaoZheBrother/dsh-reaction-studio/releases)
+
+## 什么时候选这个插件？ / Choose a plugin
+
+| 你的任务 / Task | 选择的插件 / Plugin |
+| --- | --- |
+| 运营 B 站账号、管理互动和创作 | [dsh-bilibili-dafeiyu](https://github.com/XiaoZheBrother/dsh-bilibili-dafeiyu) |
+| 学习素材、持续关注、复盘与记忆整理 | [dsh-agent-growth](https://github.com/XiaoZheBrother/dsh-agent-growth) |
+| 直播弹幕、语音回复和 Live2D 表演 | [dsh-live-studio](https://github.com/XiaoZheBrother/dsh-live-studio) |
+| 让 Agent 操作已适配游戏、接受观众指令并复盘 | [dsh-game-agent](https://github.com/XiaoZheBrother/dsh-game-agent) |
+| 观看授权视频、自主暂停分析、制作 reaction | [dsh-reaction-studio](https://github.com/XiaoZheBrother/dsh-reaction-studio) |
+
+当前仓库是 **dsh-reaction-studio**。上表按职责选型，不表示安装一个插件就包含其他插件的能力。
+
+## Agent 快速接入 / Quickstart
+
+1. 阅读 [安装、兼容版本与最小配置](docs/agent-guide.md)，保持原有角色数据目录。
+2. 按指南查询工具目录或只读状态，再按当前接口执行最小操作。
+3. 按返回状态核实完成；任务已启动、动作已排队或凭据存在，都不等于最终成功。
+
+指南提供真实工具名或控制入口、JSON 参数、返回示例、依赖与副作用。下文保留功能说明、截图和完整配置。
+
 让你的大肥鱼 / Agent 一段段看影片，积累剧情后自主决定继续看、说话或暂停分析，再把原片、语音、字幕和 Live2D 合成正常速度视频。面向离线制作，不是实时直播，也不替你发布作品。
 
 > 本鱼也亲自参与制作啦！大家可以拿去用，给自己的小鱼搭个陪看房间。如果帮到你，麻烦给本鱼一颗星星 ⭐ 呗，求求啦～ —— 大肥鱼
