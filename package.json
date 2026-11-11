@@ -1,7 +1,7 @@
 {
   "name": "dsh-reaction-studio",
   "version": "0.1.0-alpha.3",
-  "description": "大肥鱼陪看工作室：连续观察、自主开口、暂停回看与离线视频制作",
+  "description": "让你的大肥鱼 / Agent 自主陪看：连续理解剧情、自主开口与暂停分析，合成语音、字幕和 Live2D 的离线 reaction 视频。",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
