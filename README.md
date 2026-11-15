@@ -32,7 +32,7 @@ A DeepSeek Harness (DSH) plugin for offline video reaction: chronological audiov
 
 > 本鱼也亲自参与制作啦！大家可以拿去用，给自己的小鱼搭个陪看房间。如果帮到你，麻烦给本鱼一颗星星 ⭐ 呗，求求啦～ —— 大肥鱼
 
-当前 **0.1.0-alpha.3 开发预览**。核心流程在本机完成过完整一集制作；新版音画理解做过三分钟样片。提取后的安装包经过测试，不代表任意模型和新电脑都完成了实机验收。
+当前 **0.1.0-alpha.4 开发预览**。核心流程在本机完成过完整一集制作；新版音画理解做过三分钟样片。提取后的安装包经过测试，不代表任意模型和新电脑都完成了实机验收。
 
 ## 能做什么
 
@@ -46,7 +46,7 @@ A DeepSeek Harness (DSH) plugin for offline video reaction: chronological audiov
 
 ## 安装
 
-需要 DSH 0.2.1-rc.5 或兼容版本、Node.js 22.19+、Python 3.11+、Chromium，以及自行准备的 Live2D 模型和 Cubism Core。先安装配套 [dsh-live-studio](https://github.com/XiaoZheBrother/dsh-live-studio) **0.2.0-alpha.3**，它提供人设/记忆/前缀读取与 Live2D 公共组件；只做陪看时不用启用直播服务。
+需要 DSH 0.2.1-rc.5 或兼容版本、Node.js 22.19+、Python 3.11+、Chromium，以及自行准备的 Live2D 模型和 Cubism Core。先安装配套 [dsh-live-studio](https://github.com/XiaoZheBrother/dsh-live-studio) **0.2.0-alpha.4**，它提供人设/记忆/前缀读取与 Live2D 公共组件；只做陪看时不用启用直播服务。
 
 在同一个 DSH home / profile 中安装两个仓库的 Release tgz，先直播插件、后本插件：
 
@@ -100,3 +100,7 @@ python -m venv .venv
 - [B 站工作台](https://github.com/XiaoZheBrother/dsh-bilibili-dafeiyu)：账号、作品、互动和发布管理。
 
 原片、声音、输出视频、模型与私人数据不随包分发。使用自己有权处理的素材；缩小原片画面不意味着获得公开传播授权。
+
+## 本次更新
+
+统一离线上下文预算与分阶段用量记录，改进多行字幕、片尾感想和配音时间轴；新增可显式运行的连续剧情与归属证据流程。主对话工具不会自动切换到实验流程，IndexTTS2 仍需另配本地音频模块。入口、配置及限制见[连续陪看说明](docs/continuous-viewing.md)。

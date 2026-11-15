@@ -20,10 +20,14 @@ def parse_delivery(raw):
 async def main(a):
     a.output.mkdir(parents=True,exist_ok=True)
     original=json.loads((a.viewing/'viewing-state.json').read_text('utf-8'))
-    v4=original.get('input',{}).get('interaction_version')==4
+    v4=original.get('input',{}).get('interaction_version',3)>=4
+    v5=original.get('input',{}).get('interaction_version',3)>=5
     if not original.get('complete'):raise ValueError('Finish watching before final dubbing')
     system,prefix,key=generator.load_context(a.home,a.persona,scene='reaction_offline')
     engine=Reactor(a.home,a.persona,max_calls=600)
+    # Timing review includes word timestamps and eight frames; preserve those
+    # rather than truncate evidence needed to align the chosen voice.
+    engine.context_budget=48000;engine.usage_log=a.output/'model-usage.jsonl';engine.stage='dubbing_delivery_timing'
     voice_settings=json.loads(a.voice_settings.read_text('utf-8')) if getattr(a,'voice_settings',None) else None
     async def ask(prompt,context,parser):
         context=dict(context);frames=context.pop('_frames',[]);feedback=''
@@ -80,7 +84,10 @@ async def main(a):
                     if v4:
                         from reaction_experience import ARRANGE_PROMPT,playback_constraints
                         constraints=playback_constraints(at,audio['duration'],state['voice_until'],PlaybackTimeline(state['pauses']).output_at(original['input']['seconds']),event.get('delivery','overlay'))
-                        if not any(constraints.values()):
+                        if v5:
+                            from reaction_narrative import PLAYBACK_PROMPT
+                            review=await ask(PLAYBACK_PROMPT,dict(evidence,your_text=text,actual_voice_seconds=audio['duration'],constraints=constraints,selected_delivery=event.get('delivery'),prior_reviews=reviews),parse_review)
+                        elif not any(constraints.values()):
                             review={'choice':'pause' if event.get('delivery')=='pause' else 'keep','reason':'No playback conflict; preserve original wording and actor-selected delivery','text':''}
                         else:
                             review=await ask(ARRANGE_PROMPT,dict(evidence,your_text=text,actual_voice_seconds=audio['duration'],constraints=constraints,selected_delivery=event.get('delivery'),prior_reviews=reviews),parse_review)
@@ -94,6 +101,17 @@ async def main(a):
                     chosen={'text':text,'audio':audio,'delivery':delivery,'review':review,'reviews':reviews};save(receipt,chosen);break
             event.update(text=chosen['text'],voice_delivery=chosen['delivery'],dubbing_reviews=chosen['reviews'])
             review=chosen['review']
+            # Playback safety is separate from personality and speaking frequency.
+            # Keep the actor's complete words; hold the source during long speech.
+            overlay_limit=(voice_settings or {}).get('overlay_max_seconds',10)
+            if v4 and not v5 and review['choice']=='keep' and chosen['audio']['duration']>overlay_limit:
+                review={'choice':'pause','reason':'完整口播超过连续叠加播放时长，暂停原片避免表达落后于画面。','text':''}
+                chosen={**chosen,'review':review,'reviews':chosen['reviews']+[{'review':review,'duration':chosen['audio']['duration'],'policy':'long-speech-hold-v1'}]}
+                # Re-evaluate onset with the selected hold; do not reuse a plan
+                # that deferred speech only because overlay would overrun.
+                chosen.pop('timing',None)
+                save(receipt,chosen)
+                event['dubbing_reviews']=chosen['reviews']
             if voice_settings and voice_settings.get('autonomous_timing',True) and review['choice']!='defer' and str(event['id']) not in timings:
                 from reaction_onset import choose_onset
                 if 'timing' not in chosen:

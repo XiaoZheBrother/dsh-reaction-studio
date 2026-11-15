@@ -71,8 +71,9 @@ async def main(args):
     ff=imageio_ffmpeg.get_ffmpeg_exe(); frames=args.output/'observed-frames'
     signature={'video':str(args.video.resolve()),'size':args.video.stat().st_size,'seconds':args.seconds,'step':args.step,'pacing_version':2}
     deferred_voice=getattr(args,'deferred_voice',False)
-    v4=os.environ.get('FEIYU_REACTION_INTERACTION_VERSION')=='4'
-    if v4:signature['interaction_version']=4
+    version=int(os.environ.get('FEIYU_REACTION_INTERACTION_VERSION','3'))
+    v4=version>=4;v5=version>=5
+    if v4:signature['interaction_version']=version
     if deferred_voice:signature['voice_stage']='deferred-v1'
     hearing_path = getattr(args, 'hearing', None)
     hearing = json.loads(hearing_path.read_text(encoding='utf-8')) if hearing_path else None
@@ -96,6 +97,7 @@ async def main(args):
     system,prefix,key=generator.load_context(args.home,args.persona,scene='reaction_offline')
     engine=Reactor(args.home,args.persona,max_calls=2400)
     engine.calls=state['calls'];engine.usage=state['usage']
+    engine.context_budget=36000;engine.usage_log=args.output/'model-usage.jsonl'
     gate=system[0]['content']+'\n'+INTENT_PROMPT[INTENT_PROMPT.index('这一步只作内部选择'):]
     gate+='\n当前是在陪搭档一起看影片，观看进度会等待处理完再继续。这次收到已播放的新画面，请按自己的想法决定：有想说的话就选speak；想接着看就选continue；想重看就选replay。三种选择都正常。表达不要求先解开剧情疑问，不需要证明有必要发言；也不需要为了回应这次调用而说话。playback是正在说的话和还没说出的想法。正在说话时，新的想法先保留；说完后由你结合最新画面决定是否还想说，也可改变或放下先前想法。'
     gate+='\n'+PACING_PROMPT+'\n'+PERFORMANCE_PROMPT+'\n可调用的播放工具：'+json.dumps(TOOLS,ensure_ascii=False)
@@ -105,9 +107,16 @@ async def main(args):
     if deferred_voice:
         gate+='\n这是离线观看制作，仅依据当前已播放的材料作出反应，不使用未播放的剧情。观看视角按本次任务要求，不能从离线制作推断这是重看。配音稍后合成，speech_awareness的时长是临时估计；并非要求填满时间。'
     if v4:
-        from reaction_experience import STATE_PROMPT,CHOICE_PROMPT,EXPRESSION_PROMPT,apply_updates,snapshot,expression_context
+        from reaction_experience import STATE_PROMPT,CHOICE_PROMPT,EXPRESSION_PROMPT,commit_observation_updates,snapshot,expression_context
         gate=system[0]['content']+'\n'+INTENT_PROMPT+'\n'+CHOICE_PROMPT+'\n'+PERFORMANCE_PROMPT
-    async def complete(messages, structured=False):
+    if v5:
+        from reaction_narrative import NARRATIVE_PROMPT,PUBLIC_PROMPT,narrative_snapshot,parse_narrative,public_context,validate_public_choice
+        gate=system[0]['content']+'\n'+PUBLIC_PROMPT+'\n'+PERFORMANCE_PROMPT
+    elif v4 and hearing is not None:
+        gate=gate.replace('没有原声音频输入，不臆测音色。','有带时间戳的机器听觉证据；声音簇归属和叙事人物关系是不同判断。')
+    async def complete(messages, structured=False, stage=None):
+        engine.stage=stage or ('observation' if structured else 'decision')
+        engine.source_cursor=cursor
         async def request():
             return (await engine.complete(messages,key,structured=structured))[0]
         return await nonempty_response(request)
@@ -120,7 +129,7 @@ async def main(args):
         except ValueError:
             for attempt in range(3):
                 raw=await complete(prefixed([{'role':'system','content':system[0]['content']+'\n'+PERFORMANCE_PROMPT+'\n你刚选的表演无法执行，请自己从可用选项重新选择。只返回JSON {"performance":{...}}，不改台词或剧情。'},
-                    {'role':'user','content':json.dumps({'your_intent':intent},ensure_ascii=False)}]))
+                    {'role':'user','content':json.dumps({'your_intent':intent},ensure_ascii=False)}]),stage='performance')
                 try:
                     start=raw.index('{');obj,_=json.JSONDecoder().raw_decode(raw[start:])
                     return performance(obj)
@@ -158,12 +167,18 @@ async def main(args):
                             'speaker_hypotheses':{k:v[-3:] for k,v in state.get('speaker_hypotheses',{}).items()},
                             'recent_observations':[e.get('observation') for e in past[-12:] if e.get('observation')]}
                 if v4:evidence['continuous_understanding']=snapshot(state.get('experience_state'))
+                if v5:
+                    evidence['story_so_far']=state.get('narrative_state',{}).get('account','')
+                    evidence['continuous_understanding']=narrative_snapshot(state.get('experience_state'))
                 observation_content = [{'type':'text','text':json.dumps(evidence,ensure_ascii=False)}] + content[1:]
                 for attempt in range(3):
-                    observed = await complete([{'role':'system','content':OBSERVE_PROMPT+('\n'+STATE_PROMPT if v4 else '')},{'role':'user','content':observation_content}],structured=True)
+                    observed = await complete([{'role':'system','content':OBSERVE_PROMPT+('\n'+STATE_PROMPT if v4 else '')+('\nunexpected_change指人物处境、行动或事件的意外变化，不能仅因切镜头、表情微动或新字幕就标记。对话阶段尚在进行时保留同一个事件单元。声纹未知与叙事身份推断分开保存。' if v5 else '')},{'role':'user','content':observation_content}],structured=True,stage='observation_repair' if attempt else 'observation')
                     try:
                         observation = parse_observation(observed,recent_cues)
-                        if v4:state['experience_state']=apply_updates(state.get('experience_state'),observation.get('updates',[]),cursor)
+                        if v4:
+                            state['experience_state']=commit_observation_updates(state.get('experience_state'),observation,cursor,final_attempt=attempt==2)
+                            if observation.get('rejected_updates'):
+                                save(args.output/f'observation-rejected-updates-{len(past)}.json',{'cursor':cursor,**observation['rejected_updates']})
                         break
                     except (ValueError, TypeError) as error:
                         save(args.output/f'observation-format-{len(past)}-{attempt}.json',{'cursor':cursor,'raw':observed,'error':str(error)})
@@ -176,6 +191,24 @@ async def main(args):
                 if v4:
                     content=[{'type':'text','text':json.dumps({'cursor':cursor,'current_experience':observation['understanding'],'change':observation['change'],'your_attention':state.get('actor_attention',''),'understanding':snapshot(state.get('experience_state')),'speech_awareness':speech_awareness(past,output_at),'playback':{'busy':busy},'available_tools':TOOLS},ensure_ascii=False)}]
                     if control:content.append({'type':'text','text':json.dumps({'main_dialogue_tool_request':control},ensure_ascii=False)})
+            if v5 and not busy and (signal or control):
+                narrative_input={'viewed_through':cursor,'previous_account':state.get('narrative_state',{}).get('account',''),
+                    'continuous_understanding':narrative_snapshot(state.get('narrative_state')),
+                    'observed_history':[{'cursor':e['cursor'],'observation':e.get('observation')} for e in past if e['cursor']>state.get('narrative_cursor',0)],
+                    'current_observation':observation,'hearing':recent_cues}
+                private_raw=await complete(prefixed([{'role':'system','content':NARRATIVE_PROMPT},{'role':'user','content':json.dumps(narrative_input,ensure_ascii=False)}]),stage='narrative')
+                # Keep raw interpretation and revisions out of the spoken channel.
+                for attempt in range(3):
+                    try:
+                        state['narrative_state']=parse_narrative(private_raw,state.get('narrative_state'),cursor);break
+                    except (ValueError,TypeError) as exc:
+                        save(args.output/f'narrative-format-{len(past)}-{attempt}.json',{'cursor':cursor,'raw':private_raw,'error':str(exc)})
+                        if attempt==2:raise
+                        private_raw=await complete(prefixed([{'role':'system','content':NARRATIVE_PROMPT},{'role':'user','content':json.dumps({'original':private_raw,'validation_error':str(exc),'viewed_through':cursor,'actual_evidence':narrative_input,'repair_contract':'evidence_at须为非空数字秒数数组，不能写字符串或时间范围；只能引用实际提供且不超过viewed_through的时刻。无对应证据的updates项不要输出。'},ensure_ascii=False)}]),stage='narrative_repair')
+                state.setdefault('narrative_history',[]).append({'cursor':cursor,'raw':private_raw,'account':state['narrative_state']['account']})
+                state['narrative_cursor']=cursor
+                content=[{'type':'text','text':json.dumps(public_context(state,cursor,speech_awareness(past,output_at),TOOLS),ensure_ascii=False)}]
+                if control:content.append({'type':'text','text':json.dumps({'main_dialogue_tool_request':control},ensure_ascii=False)})
             if hearing is not None and (busy or not (signal or control)):
                 raw=json.dumps({'action':'continue','story':observation['understanding'][:1800],'interest':observation['change'][:400],
                     'reason':'持续观察，尚无新的完整事件或突发变化供自主审议' if not busy else '持续观察，发言仍在进行；积累理解，不排队新台词',
@@ -185,13 +218,17 @@ async def main(args):
             repaired=raw
             for repair in range(4):
                 try:
-                    intent=parse_intent(repaired,0,cursor);break
+                    intent=parse_intent(repaired,0,cursor)
+                    if v5 and (signal or control) and not busy:
+                        if intent['action']=='speak' and 'delivery' not in json.JSONDecoder().raw_decode(repaired[repaired.index('{'):])[0]:raise ValueError('Explicit playback choice required')
+                        validate_public_choice(intent)
+                    break
                 except ValueError:
                     save(args.output/f'intent-format-{len(past)}-{repair}.json',{'cursor':cursor,'raw':repaired})
                     if repair==3:raise
                     # Repair serialization only; no replacement speaking decision.
-                    repaired=await complete([{'role':'system','content':f'只把给定结果整理成合法JSON，保持原有选择和含义，不另作决定。focus_at必须是0至{cursor}之间的数字秒数，不是字符串或分秒记法。seconds必须为数字，不能为null。story最多1800字，interest最多400字，reason和topic各最多600字。'+INTENT_PROMPT},
-                                            {'role':'user','content':repaired}],structured=True)
+                    repaired=await complete([{'role':'system','content':f'只把给定结果整理成合法JSON，保持原有选择和含义，不另作决定。focus_at必须是0至{cursor}之间的数字秒数，不是字符串或分秒记法。seconds必须为数字，不能为null。story最多1800字，interest最多400字，reason和topic各最多600字。'+(PUBLIC_PROMPT if v5 else INTENT_PROMPT)},
+                                            {'role':'user','content':repaired}],structured=True,stage='format_repair')
             if control:
                 intent.update(action='speak' if control['action']=='pause_analysis' else 'replay',focus_at=cursor)
                 if control['action']=='pause_analysis':intent.update(topic=control['topic'],delivery='pause',pause_reason=control['topic'])
@@ -200,6 +237,7 @@ async def main(args):
             if observation is not None:
                 event.update(observation=observation,hearing_ids=[c['id'] for c in recent_cues],
                              deliberated=not busy and bool(signal or control),turn_signal=signal)
+            if v5:event['narrative_account']=state.get('narrative_state',{}).get('account','')
             if control:event['control_id']=control['id']
             event['performance']=await selected_performance(intent)
             if v4 and not busy and (signal or control):state['actor_attention']=intent.get('interest',state.get('actor_attention',''))
@@ -208,18 +246,19 @@ async def main(args):
                 replay_content=[{'type':'text','text':f'按你的选择重看已看到的 {max(0,cursor-intent["seconds"]):.2f} 至 {cursor:.2f} 秒。没有新剧情。'}]
                 for index,at in frame_batch(cursor,args.seconds,intent['seconds']):
                     replay_content.extend([{'type':'text','text':f'{at:.2f} 秒'}, {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+base64.b64encode((frames/f'{index:06d}.jpg').read_bytes()).decode()}}])
-                reread=await complete(prefixed([{'role':'system','content':gate},{'role':'user','content':content+replay_content}]))
+                reread=await complete(prefixed([{'role':'system','content':gate},{'role':'user','content':content+replay_content}]),stage='replay')
                 revision=parse_intent(reread,0,cursor)
+                if v5:validate_public_choice(revision)
                 event.update(replay_request=intent,raw_replay=reread,**revision)
                 event['performance']=await selected_performance(revision)
-            if event['action']=='speak' and not busy:
+            if event['action']=='speak' and not busy and not v5:
                 expression=system[0]['content']+'\n'+SPEECH_PROMPT+'\n'+PACING_PROMPT
                 if v4:
                     expression=system[0]['content']+'\n'+EXPRESSION_PROMPT
                     content=[{'type':'text','text':json.dumps(expression_context(state,event,speech_awareness(past,output_at)),ensure_ascii=False)}]
                 if hearing is not None:
                     expression=expression.replace('没有原声音频输入，不臆测音色。','听觉证据来自带时间戳的机器转写和声纹候选，不能把不确定的角色归属说成事实。')
-                text=await complete(prefixed([{'role':'system','content':expression},{'role':'user','content':content if v4 else content+[{'type':'text','text':json.dumps({'your_intent':event},ensure_ascii=False)}]}]))
+                text=await complete(prefixed([{'role':'system','content':expression},{'role':'user','content':content if v4 else content+[{'type':'text','text':json.dumps({'your_intent':event},ensure_ascii=False)}]}]),stage='expression')
                 if not text.strip():raise ValueError('Empty chosen speech')
                 event['text']=text
             state['inflight']=event;checkpoint_now()
@@ -268,7 +307,7 @@ async def main(args):
                         review={'choice':'pause','reason':event['pause_reason'],'text':'','tool_call':{'name':'reaction_pause','arguments':{'reason':event['pause_reason'],'resume':'speech_end'}}}
                         break
                     raw=await complete(prefixed([{'role':'system','content':system[0]['content']+'\n'+review_prompt},
-                        {'role':'user','content':json.dumps(review_context,ensure_ascii=False)}]))
+                        {'role':'user','content':json.dumps(review_context,ensure_ascii=False)}]),stage='playback_arrangement')
                     try:
                         review=parse_review(raw)
                         if v4 and review['choice'] in ('keep','pause') and constraints['overlap_seconds']:
@@ -323,9 +362,11 @@ async def main(args):
         # Compress chronological evidence, not personality or speaking instructions.
         pending=state['events'][state['summarized_count']:-12]
         if len(pending)>=24:
+            from reaction_context import summary_batch
+            pending=summary_batch(pending)
             memory_input={'previous_memory':state['plot_memory'],'new_observations':[{k:e.get(k) for k in ('cursor','story','interest')} for e in pending]}
             raw=await complete([{'role':'system','content':'更新已看剧情的连续记忆。只依据输入，保留人物关系、因果、未解问题、纠正及来源时间。区分事实与推断，不补未来剧情，不评价说话风格。只返回JSON {"summary":"不超过1400字"}。'},
-                                {'role':'user','content':json.dumps(memory_input,ensure_ascii=False)}],structured=True)
+                                {'role':'user','content':json.dumps(memory_input,ensure_ascii=False)}],structured=True,stage='memory_summary')
             summary=json.loads(raw)['summary']
             if not isinstance(summary,str) or not summary.strip():raise ValueError('Invalid plot memory')
             state['memory_archives'].append({'through':pending[-1]['cursor'],'sources':[e['id'] for e in pending],'summary':summary})

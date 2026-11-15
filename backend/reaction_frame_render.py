@@ -17,6 +17,8 @@ async def render_frames(page,args,replay,performances,ff):
     count=len(list(frames.glob('*.jpg')));voices=[]
     for event in replay:
         path=args.replay/Path(event['audio']).name;samples=pcm_audio(ff,path)
+        from reaction_render import fit_caption_panel
+        event={**event,'captions':await fit_caption_panel(event['captions'],lambda text:page.evaluate('text=>window.captionLineCount(text)',text))}
         voices.append({**event,'samples':samples,'duration':len(samples)/8000,'path':path})
     duration=max([timeline.output_at(args.seconds)]+[v['at']+v['duration'] for v in voices])+.15
     nframes=math.ceil(duration*fps);duration=nframes/fps
@@ -84,6 +86,8 @@ async def render_following(page,args,replay,performances,ff):
             for event in state['events']:
                 if not event.get('audio') or event['id'] in known:continue
                 path=args.replay/Path(event['audio']).name;samples=pcm_audio(ff,path)
+                from reaction_render import fit_caption_panel
+                event={**event,'captions':await fit_caption_panel(event['captions'],lambda text:page.evaluate('text=>window.captionLineCount(text)',text))}
                 for caption in event['captions']:
                     lines=await page.evaluate('text=>window.captionLineCount(text)',caption['text'])
                     if lines>4:raise ValueError(f'Caption overflow: event {event["id"]}, {lines} lines')

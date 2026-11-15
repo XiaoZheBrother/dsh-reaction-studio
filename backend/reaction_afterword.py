@@ -8,14 +8,34 @@ from reaction_episode import save,performance,nonempty_response
 from reaction_frame_render import pcm_audio
 from reaction_render import caption_pages
 from reaction_performance import PERFORMANCE_PROMPT
+from reaction_events import scene_prefix
+
+
+def relation_afterword_state(trace,job):
+    from reaction_relations import viewing_context
+    if not trace.get('complete') or trace['cursor']!=job['seconds']:
+        raise ValueError('Finish this viewing run before writing its reflection')
+    return {'complete':True,'input':{'seconds':job['seconds'],'hearing':job['hearing']},'events':[],
+            'plot_memory':{'your_reactions_from_this_run':[{'at':d['cursor'],'text':d['text']} for d in trace['decisions'] if d.get('text')],
+                           'your_viewpoints_from_this_run':list(trace.get('viewpoints',{}).values()),
+                           'latest_evidence':viewing_context(trace['graph'],trace['cursor'],5000),
+                           'note':'自己的反应和看法可能有误，不是核实后的剧情；没有加载以前的试看。'}}
 
 async def main(a):
     a.output.mkdir(parents=True,exist_ok=True)
-    state=json.loads(((getattr(a,'final_viewing',None) or a.viewing)/'viewing-state.json').read_text(encoding='utf-8'))
+    job=json.loads(a.viewing_job.read_text('utf-8-sig')) if getattr(a,'viewing_job',None) else {}
+    if getattr(a,'relation_trace',None):
+        if not job:raise ValueError('relation trace requires viewing job')
+        state=relation_afterword_state(json.loads(a.relation_trace.read_text('utf-8')),job)
+    else:
+        state=json.loads(((getattr(a,'final_viewing',None) or a.viewing)/'viewing-state.json').read_text(encoding='utf-8'))
     assert state.get('complete')
     end=state['input']['seconds'];last=max(0,end-.25)
     system,prefix,key=generator.load_context(a.home,a.persona,scene='reaction_offline')
+    prefix=scene_prefix(prefix,job)
     engine=Reactor(a.home,a.persona)
+    engine.context_budget=64000;engine.usage_log=a.output/'model-usage.jsonl';engine.stage='afterword'
+    engine.request_output_limit=3200
     async def call(content,extra=''):
         messages=[{'role':'system','content':system[0]['content']+'\n'+extra},{'role':'user','content':content}]
         if prefix.get('enabled'):messages.append({'role':'assistant','content':'','prefix':True,'reasoning_content':prefix['prefix']})
@@ -23,7 +43,7 @@ async def main(a):
         return await nonempty_response(request)
     def obj(raw):
         return json.JSONDecoder().raw_decode(raw[raw.index('{'):])[0]
-    evidence={'viewed_up_to':end,'coverage_note':'只看完本次授权片段，不代表已看完整集；片尾只总结已看到的内容，不虚构集数边界。','note':'以下是你自己的历史理解，可能含误判，并不是核实过的剧情事实。不能把旧猜测当结论，也不要使用下一集内容。',
+    evidence={'viewed_up_to':end,'coverage_note':'本次从头看完了用户指定的第一集正片；片尾只总结本次已看到的内容。' if job.get('full_episode') else '只看完本次授权片段，不代表已看完整集；片尾只总结已看到的内容，不虚构集数边界。','note':'以下是你自己的历史理解，可能含误判，并不是核实过的剧情事实。不能把旧猜测当结论，也不要使用下一集内容。',
         'chronological_observations':[{k:e.get(k) for k in ('cursor','story','interest')} for e in state['events'] if e['cursor']%60==0 and e['cursor']<=end],
         'latest_memory':state['plot_memory']}
     if state.get('experience_state'):
@@ -35,7 +55,8 @@ async def main(a):
         hearing=json.loads(Path(state['input']['hearing']).read_text(encoding='utf-8'))
         evidence['speaker_hypotheses']={k:v[-3:] for k,v in state.get('speaker_hypotheses',{}).items()}
     if not (a.output/'review-plan.json').exists():
-        raw=await call(json.dumps(evidence,ensure_ascii=False)+f'\n搭档希望在本集后增加你自己的观后总结：这一集讲了什么、目前对动画的理解、你的感受。先自己决定需要回看哪些已看过的时间点来核对人物和旁白归属，尤其不要把旁白认成画面里角色说的话。只返回JSON {{"review_times":[数字秒数],"questions":"你要核对什么"}}，最多12个时间点，范围0至{last}。')
+        raw=await call([{'type':'text','text':json.dumps(evidence,ensure_ascii=False)},
+                       {'type':'text','text':f'搭档希望在本集后增加你自己的观后总结：这一集讲了什么、目前对动画的理解、你的感受。先自己决定需要回看哪些已看过的时间点来核对人物和旁白归属，尤其不要把旁白认成画面里角色说的话。只返回JSON {{"review_times":[数字秒数],"questions":"你要核对什么"}}，最多12个时间点，范围0至{last}。'}])
         plan=obj(raw)
         if not isinstance(plan.get('review_times'),list) or len(plan['review_times'])>12:raise ValueError('Invalid review plan')
         if any(not isinstance(t,(int,float)) or not 0<=t<=last for t in plan['review_times']):raise ValueError('Review exceeds episode')
@@ -46,18 +67,30 @@ async def main(a):
     evidence['your_deferred_thoughts']=state.get('deferred',[])
     evidence['deferred_note']='这些是你观看时决定暂不说的想法，不是核实事实，也不要求逐条讲；由你决定片尾还想不想谈。'
     content=[{'type':'text','text':json.dumps({'viewing_evidence':evidence,'your_review_plan':plan},ensure_ascii=False)}]
-    if state['input'].get('hearing'):
-        selected=[c for c in heard_until(hearing,end) if any(abs(c['start']-t)<=6 for t in plan['review_times'])]
-        content.append({'type':'text','text':json.dumps({'timestamped_hearing':selected,'note':'匿名声纹候选不是角色身份，机器转写和归属推断可能出错。'},ensure_ascii=False)})
+    review_notes=[]
     for t in plan['review_times']:
+        note_path=a.output/f'review-evidence-{t:g}.json'
+        review_content=[{'type':'text','text':json.dumps({'review_at':t,'questions':plan['questions'],'viewed_through':end},ensure_ascii=False)}]
+        if state['input'].get('hearing'):
+            selected=[{k:v for k,v in c.items() if k!='words'} for c in heard_until(hearing,end) if abs(c['start']-t)<=6]
+            review_content.append({'type':'text','text':json.dumps({'hearing':selected,'note':'声音簇不是角色身份，保留归属置信度与未知。'},ensure_ascii=False)})
         for index in sorted(set(max(0,min(int(last*4),int(t*4)+delta)) for delta in (-2,0,2))):
-            path=a.viewing/'observed-frames'/f'{index+1:06d}.jpg'
-            content.extend([{'type':'text','text':f'你选择回看的画面 {index/4:.2f} 秒'},
+            path=(Path(job['frames']) if job else a.viewing/'observed-frames')/f'{index+1:06d}.jpg'
+            review_content.extend([{'type':'text','text':f'你选择回看的画面 {index/4:.2f} 秒'},
                 {'type':'image_url','image_url':{'url':'data:image/jpeg;base64,'+base64.b64encode(path.read_bytes()).decode()}}])
+        if not note_path.exists():
+            engine.stage='afterword_grounding'
+            note=await call(review_content,'这是你自己选择的一个回看片段，只核对这一个位置能支持的事实。用简短记录保留时间、可见或可听的依据、人物和旁白归属的不确定性，不能仅凭出镜人物给台词署名。不替其他回看位置下结论，不写口播。')
+            save(note_path,{'source':t,'note':note,'questions':plan['questions']})
+        review_notes.append(json.loads(note_path.read_text('utf8')))
+    engine.stage='afterword'
+    content.append({'type':'text','text':json.dumps({'review_evidence':review_notes,'note':'分批回看的自主核对记录，仍可能有误；保留不确定性，不把推断当事实。'},ensure_ascii=False)})
     if not (a.output/'reflection.txt').exists():
         if (a.output/'feedback.txt').exists() and not (a.output/'grounding.json').exists():
             content.append({'type':'text','text':json.dumps({'your_previous_draft':(a.output/'previous-draft.txt').read_text(encoding='utf-8'),'fact_review_feedback':(a.output/'feedback.txt').read_text(encoding='utf-8')},ensure_ascii=False)})
         content.append({'type':'text','text':'本次观看已结束。请直接说出你的片尾总结，讲讲已看部分发生了什么、你现在怎样理解这部动画，以及你自己的感受和还想知道的事。内容取舍和观点由你决定，不把样片说成已看完整集。不使用未看过的剧情，不把没弄清的字幕说话人或旧猜测当事实。这里只能从画面及字幕核对，没有原声输入；有些话是谁的内心独白，不确定就保留不确定。只输出会说出来的文字，表情动作另行选择。'})
+        if job.get('full_episode'):
+            content[-1]['text']=content[-1]['text'].replace('不把样片说成已看完整集。','')
         if state['input'].get('hearing'):
             content[-1]['text']=content[-1]['text'].replace('这里只能从画面及字幕核对，没有原声输入；','这里有机器听觉证据及画面，联合核对；')
         text=await call(content)
@@ -112,4 +145,5 @@ if __name__=='__main__':
     p=argparse.ArgumentParser()
     for name in ['viewing','output','home','persona']:p.add_argument('--'+name,type=Path,required=True)
     p.add_argument('--voice-settings',type=Path);p.add_argument('--final-viewing',type=Path)
+    p.add_argument('--relation-trace',type=Path);p.add_argument('--viewing-job',type=Path)
     asyncio.run(main(p.parse_args()))

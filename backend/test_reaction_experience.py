@@ -1,5 +1,5 @@
 import unittest
-from reaction_experience import apply_updates,snapshot,expression_context,playback_constraints
+from reaction_experience import apply_updates,snapshot,expression_context,playback_constraints,commit_observation_updates
 
 class ExperienceTests(unittest.TestCase):
     def record(self,**kw):return dict(id='person-a',kind='entity',claim='unknown person',status='tentative',confidence=.4,evidence_at=[2],**kw)
@@ -24,5 +24,23 @@ class ExperienceTests(unittest.TestCase):
         self.assertEqual(playback_constraints(10,5,12,14),{'overlap_seconds':2,'beyond_source_seconds':1})
     def test_pause_does_not_consume_remaining_source(self):
         self.assertFalse(any(playback_constraints(95,30,90,100,'pause').values()))
+    def test_failed_memory_batch_is_atomic_and_does_not_discard_observation(self):
+        previous=apply_updates(None,[self.record()],2)
+        obs={'understanding':'valid observed event','updates':[{**self.record(),'id':'new-person'},{**self.record(),'kind':'event'}]}
+        with self.assertRaisesRegex(ValueError,'existing kind is entity'):
+            commit_observation_updates(previous,obs,3)
+        result=commit_observation_updates(previous,obs,3,final_attempt=True)
+        self.assertEqual(result,previous)
+        self.assertEqual(obs['understanding'],'valid observed event')
+        self.assertEqual(obs['updates'],[])
+        self.assertEqual(len(obs['rejected_updates']['updates']),2)
+        self.assertNotIn('new-person',result['records'])
+    def test_oversized_claim_feedback_identifies_record_and_limit(self):
+        previous=apply_updates(None,[self.record()],2)
+        update={**self.record(),'claim':'x'*1225}
+        with self.assertRaisesRegex(ValueError,'person-a: claim has 1225 characters; required 1..1200'):
+            apply_updates(previous,[update],2)
+        self.assertEqual(previous['records']['person-a']['claim'],'unknown person')
+        self.assertEqual(len(previous['history']),1)
 
 if __name__=='__main__':unittest.main()

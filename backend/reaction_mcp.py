@@ -130,7 +130,9 @@ class ReactionJobs:
         review=json.loads(review_path.read_text('utf-8')) if phase=='complete' and review_path.exists() else None
         consumed={e.get('control_id') for e in viewed.get('events',[])}
         pending=[json.loads(p.read_text(encoding='utf-8')) for p in (path/'controls').glob('*.json')]
+        from reaction_usage import usage_report
         return {'job_id':job_id,'phase':phase,'running':running,'viewed_seconds':viewed.get('cursor',0),'source_seconds':job['seconds'],
+                'model_usage':usage_report(path),
                 'speech_count':len(final.get('playbacks',[])),'pause_count':len(final.get('pauses',[])),
                 'human_review_required':True,'review':review,'voice_profile':job.get('voice_studio',{}).get('profile',{}).get('id'),
                 'observation_mode':'audiovisual_event_units' if viewed.get('input',{}).get('attention_version')==3 else 'legacy',

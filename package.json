@@ -1,6 +1,6 @@
 {
   "name": "dsh-reaction-studio",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "让你的大肥鱼 / Agent 自主陪看：连续理解剧情、自主开口与暂停分析，合成语音、字幕和 Live2D 的离线 reaction 视频。",
   "type": "module",
   "main": "index.js",
@@ -40,7 +40,7 @@
     "node": ">=22.19.0"
   },
   "peerDependencies": {
-    "dsh-live-studio": "^0.2.0-alpha.3",
+    "dsh-live-studio": "^0.2.0-alpha.4",
     "@deepseek-ai/schemastery": "^3.18.4",
     "@deepseek-ai/dsh-tools": ">=0.2.1-rc.5"
   },

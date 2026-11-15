@@ -7,6 +7,21 @@ import imageio_ffmpeg
 def stamp(t):
     return f'{int(t//3600)}:{int(t%3600//60):02d}:{t%60:05.2f}'
 
+async def fit_caption_panel(captions, measure_lines, max_lines=4):
+    """Merge timed chunks using the renderer's actual font and panel width."""
+    pages=[]
+    for caption in captions:
+        current=dict(caption)
+        if await measure_lines(current['text'])>max_lines:
+            raise ValueError('Single subtitle chunk exceeds panel capacity')
+        if pages:
+            text=pages[-1]['text']+current['text']
+            if await measure_lines(text)<=max_lines:
+                pages[-1].update(text=text,end=current['end'])
+                continue
+        pages.append(current)
+    return pages
+
 def caption_groups(boundaries, max_chars=24):
     groups=[];current=[];length=0;previous_end=0
     for word in boundaries:

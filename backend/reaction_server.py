@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from live_pilot_chat import LiveChat, generator
-from reaction_context import pack_context, pack_decision
+from reaction_context import pack_context, pack_decision, pack_messages
 from reaction_perception import PERCEPTION, parse_perception
 from reaction_memory import StoryMemory, EPISODE_PROMPT
 
@@ -117,26 +117,48 @@ class Reactor:
         self.usage = 0
         self.timeline = None
         self.image_scale = 1.0
+        self.usage_log = None
+        self.stage = 'unspecified'
+        self.source_cursor = None
+        self.context_budget = None
+        self.output_limit = 3000
 
     async def complete(self, messages, key, structured=False):
         import aiohttp
         if self.calls >= self.max_calls:
             raise ValueError(f'本次观看已达到{self.max_calls}次调用上限，请停止观察')
         self.calls += 1
+        budget = None
+        limit = getattr(self,'request_output_limit',None) or (self.output_limit if structured else 1800)
+        if self.context_budget:
+            messages,budget = pack_messages(messages, budget=self.context_budget, output_reserve=limit)
         request = {'model':'deepseek-flash', 'thinking':{'type':'disabled' if structured else 'enabled'}, 'reasoning_effort':'low',
-                   'max_tokens':3000 if structured else 1800, 'messages':messages}
+                   'max_tokens':limit, 'messages':messages}
         if structured:
             request['response_format'] = {'type':'json_object'}
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60), trust_env=True) as client:
-            async with client.post('https://api.deepseek.com/beta/chat/completions',
-                headers={'Authorization':'Bearer '+key}, allow_redirects=False, json=request) as response:
-                response.raise_for_status()
-                payload = await response.json()
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60), trust_env=True) as client:
+                async with client.post('https://api.deepseek.com/beta/chat/completions',
+                    headers={'Authorization':'Bearer '+key}, allow_redirects=False, json=request) as response:
+                    response.raise_for_status()
+                    payload = await response.json()
+        except Exception as exc:
+            if self.usage_log:
+                with Path(self.usage_log).open('a',encoding='utf8') as log:
+                    log.write(json.dumps({'at':time.time(),'stage':self.stage,'source':self.source_cursor,'usage':None,'error_type':type(exc).__name__,'status':getattr(exc,'status',None),'finish_reason':'request_failed','budget':budget})+'\n')
+            raise
         usage = payload.get('usage', {})
         self.usage += usage.get('total_tokens', 0)
         choice = payload['choices'][0]
+        if self.usage_log:
+            row={'at':time.time(),'stage':self.stage,'source':self.source_cursor,
+                 'usage':usage,'finish_reason':choice['finish_reason'],'budget':budget}
+            with Path(self.usage_log).open('a',encoding='utf-8') as log:
+                log.write(json.dumps(row,ensure_ascii=False)+'\n')
         if choice['finish_reason'] != 'stop':
+            if structured and choice['finish_reason']=='length':self.output_limit=min(6000,limit*2)
             raise ValueError('模型输出未完成')
+        self.output_limit=3000
         return choice['message']['content'].strip(), usage.get('prompt_tokens', 0)
 
     async def observe(self, body):

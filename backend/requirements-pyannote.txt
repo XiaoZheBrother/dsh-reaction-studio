@@ -1,0 +1,4 @@
+# Install in a separate Python 3.12 environment, never the live DSH/TTS venv.
+pyannote.audio==4.0.7
+whisperx==3.8.6
+imageio-ffmpeg==0.8.1
